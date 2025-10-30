@@ -1,9 +1,9 @@
 name: Build recomputer-rk3588-devkit on Tag
 
 on:
-  create:
+  push:
     tags:
-      - '**'
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag_name:
@@ -24,10 +24,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag_name=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "create" ]; then
-            echo "tag_name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "Unknown event" >&2; exit 1
+            echo "tag_name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout code
@@ -35,59 +33,32 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get CHANGELOG entry for tag
+      - name: Parse CHANGELOG block
         id: changelog
         run: |
           TAG='${{ steps.tag-name.outputs.tag_name }}'
-          echo "TAG=$TAG"
-
-          # 找到标签标题行 (允许后面跟描述)，示例: ## v1.0.0 Initial release
           TITLE_LINE=$(grep -E "^##[[:space:]]*$TAG(\b|[[:space:]])" CHANGELOG.md | head -1 || true)
-          if [ -z "$TITLE_LINE" ]; then echo "Tag heading not found"; exit 1; fi
-
-          # 提取标题内容(去掉前缀 ## <tag>)，保留后续描述文字，可为空
-          TITLE=$(echo "$TITLE_LINE" | sed -E "s/^##[[:space:]]*$TAG[[:space:]]*//")
-
-          # 生成内容文件：从匹配标签行开始直到下一个以 ## 开头的标签行(不包含下一标签行)或文件末尾，保留所有原始行和空行
+          if [ -z "$TITLE_LINE" ]; then echo "Tag heading not found in CHANGELOG.md"; exit 1; fi
           CONTENT_FILE=$(mktemp)
           awk -v tag="$TAG" '
             BEGIN { capture=0 }
             /^##[[:space:]]+/ {
-              # 如果已经在捕获并遇到新的标签行(且不是当前标签行)，则结束
               if (capture && $0 !~ "^##[[:space:]]*" tag "([[:space:]]|$)") exit
             }
             $0 ~ "^##[[:space:]]*" tag "([[:space:]]|$)" { capture=1 }
             capture { print }
           ' CHANGELOG.md > "$CONTENT_FILE"
-
           if [ ! -s "$CONTENT_FILE" ]; then echo "Empty block"; exit 1; fi
-
-          # 检测板块: 需要出现三级标题行 ### recomputer-rk3588-devkit (允许前后空格)
-          if grep -Eq "^###[[:space:]]+${BOARD}[[:space:]]*$" "$CONTENT_FILE"; then
-            echo "skip_workflow=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip_workflow=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          # 输出变量：标题使用 “<tag> <描述>” 格式；若无描述则仅 tag
-          if [ -n "$TITLE" ]; then
-            echo "changelog_title=$TAG $TITLE" >> "$GITHUB_OUTPUT"
-          else
-            echo "changelog_title=$TAG" >> "$GITHUB_OUTPUT"
-          fi
-          echo "changelog_content=$CONTENT_FILE" >> "$GITHUB_OUTPUT"
-
-          echo "--- Captured block ---"
-          cat "$CONTENT_FILE"
-          echo "----------------------"
+          BODY_FILE=$(mktemp)
+          tail -n +2 "$CONTENT_FILE" > "$BODY_FILE"
+          echo "body_path=$BODY_FILE" >> "$GITHUB_OUTPUT"
+          echo "title_line=$TITLE_LINE" >> "$GITHUB_OUTPUT"
 
       - name: Show parsed changelog
-        if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
-          echo "Title: ${{ steps.changelog.outputs.changelog_title }}"; echo "----"; cat "${{ steps.changelog.outputs.changelog_content }}"
+          echo "Title line: ${{ steps.changelog.outputs.title_line }}"; echo "----"; cat "${{ steps.changelog.outputs.body_path }}"
 
       - name: Cache ccache
-        if: steps.changelog.outputs.skip_workflow == 'false'
         uses: actions/cache@v4
         with:
           path: cache/ccache
@@ -96,7 +67,6 @@ jobs:
             ccache-${{ runner.os }}-
 
       - name: Install build dependencies (extended)
-        if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
           sudo apt-get remove aria2 ansible shellcheck rpm xorriso zsync \
           clang-6.0 lldb-6.0 lld-6.0 clang-format-6.0 clang-8 lldb-8 lld-8 clang-format-8 \
@@ -120,14 +90,12 @@ jobs:
           sudo apt-get clean
           sudo apt-get autoremove -y >/dev/null 2>&1
           sudo apt-get autoclean -y >/dev/null 2>&1
-          #echo "https://github.com/actions/virtual-environments/issues/709"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          echo "remove big /usr/local"
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf /usr/local/lib/android >/dev/null 2>&1
-          sudo rm -rf /usr/share/dotnet/sdk > /dev/null 2>&1
-          sudo rm -rf /usr/share/dotnet/shared > /dev/null 2>&1
-          sudo rm -rf /usr/share/swift > /dev/null 2>&1
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          sudo rm -rf "/usr/local/share/boost" || true
+          sudo rm -rf /usr/local/lib/android >/dev/null 2>&1 || true
+          sudo rm -rf /usr/share/dotnet/sdk > /dev/null 2>&1 || true
+          sudo rm -rf /usr/share/dotnet/shared > /dev/null 2>&1 || true
+          sudo rm -rf /usr/share/swift > /dev/null 2>&1 || true
           sudo -E apt-get -qq update
           sudo -E apt-get -y install git
           sudo -E apt-get -qq autoremove --purge
@@ -139,39 +107,20 @@ jobs:
             pv pigz rsync zip xz-utils \
             qemu-user-static binfmt-support arch-test \
             parted dosfstools e2fsprogs squashfs-tools \
-            python3  python3-setuptools \
+            python3 python3-setuptools \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
           sudo apt-get clean
-          # 显示磁盘状态
           df -h
 
       - name: Enable & verify binfmt/qemu
-        if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
-          # 尝试手动启用常用架构 (有些 runner 已自动注册，失败不致命)
-          for t in qemu-arm qemu-aarch64 qemu-riscv64; do
-            sudo update-binfmts --enable $t || echo "warn: enable $t failed"
-          done
-          echo "--- binfmt status ---"
+          for t in qemu-arm qemu-aarch64 qemu-riscv64; do sudo update-binfmts --enable $t || echo "warn: enable $t failed"; done
           update-binfmts --display | grep -E 'qemu-(arm|aarch64|riscv64)' || true
-          echo "--- arch-test ---"
           arch-test || true
-          echo "--- qemu-user-static files ---"
           ls -l /usr/bin/qemu-*static || true
 
-      - name: Install build dependencies (minimal)
-        if: steps.changelog.outputs.skip_workflow == 'false'
-        run: |
-          sudo apt-get -qq update
-          sudo apt-get install -y --no-install-recommends \
-            git curl jq bc bison flex build-essential \
-            libssl-dev libncurses5-dev libncursesw5-dev device-tree-compiler \
-            pv pigz rsync zip xz-utils
-          sudo apt-get clean
-
-      - name: Build image
+      - name: Build image (compressed)
         id: build
-        if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
           set -e
           ./compile.sh build BOARD=recomputer-rk3588-devkit BRANCH=vendor BUILD_DESKTOP=yes BUILD_MINIMAL=no DESKTOP_APPGROUPS_SELECTED= DESKTOP_ENVIRONMENT=gnome DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base KERNEL_CONFIGURE=no RELEASE=bookworm COMPRESS_OUTPUTIMAGE=xz
@@ -180,111 +129,107 @@ jobs:
 
       - name: Check if release exists
         id: check_release
-        if: steps.changelog.outputs.skip_workflow == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG='${{ steps.tag-name.outputs.tag_name }}'
           API="https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG"
-          JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "$API")
-          if echo "$JSON" | jq -e 'has("upload_url")' >/dev/null; then
+          JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "$API")
+          UPLOAD_URL=$(echo "$JSON" | jq -r '.upload_url // empty')
+          if [ -n "$UPLOAD_URL" ]; then
             echo "tag_exist=true" >> "$GITHUB_OUTPUT"
-            echo "upload_url=$(echo "$JSON" | jq -r .upload_url)" >> "$GITHUB_OUTPUT"
+            echo "upload_url=$UPLOAD_URL" >> "$GITHUB_OUTPUT"
           else
             echo "tag_exist=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create release
-        id: create_release
-        if: steps.changelog.outputs.skip_workflow == 'false' && steps.check_release.outputs.tag_exist == 'false'
+        if: steps.check_release.outputs.tag_exist == 'false'
         uses: actions/create-release@v1.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag-name.outputs.tag_name }}
-          release_name: ${{ steps.changelog.outputs.changelog_title }}
-          body_path: ${{ steps.changelog.outputs.changelog_content }}
+          release_name: ${{ steps.changelog.outputs.title_line }}
+          body_path: ${{ steps.changelog.outputs.body_path }}
           draft: false
           prerelease: true
 
-      - name: Prepare assets
-        id: assets
-        if: steps.changelog.outputs.skip_workflow == 'false'
+      - name: Resolve upload URL
+        id: resolve_upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ steps.create_release.outputs.upload_url }}" ]; then
-            echo "upload_url=${{ steps.create_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ steps.check_release.outputs.tag_exist }}" = "true" ]; then
             echo "upload_url=${{ steps.check_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
+          else
+            TAG='${{ steps.tag-name.outputs.tag_name }}'
+            API="https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG"
+            JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "$API")
+            echo "upload_url=$(echo "$JSON" | jq -r '.upload_url')" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Prepare asset paths
+        id: assets
+        run: |
           DIR='${{ steps.build.outputs.images_dir }}'
           UBOOT_LOADER=$(find cache/sources/u-boot-worktree -type f -name rkspi_loader.img 2>/dev/null | head -1 || true)
-          if [ -n "$UBOOT_LOADER" ]; then
-            cp "$UBOOT_LOADER" "$DIR/rkspi_loader.img" || true
-          fi
-          echo "Listing files in $DIR"; ls -lh "$DIR" || true
+          if [ -n "$UBOOT_LOADER" ]; then cp "$UBOOT_LOADER" "$DIR/rkspi_loader.img" || true; fi
           COMP_IMG=$(ls "$DIR"/*.img.xz 2>/dev/null | head -1 || true)
           COMP_SHA=$(ls "$DIR"/*.img.xz.sha 2>/dev/null | head -1 || true)
           COMP_TXT=$(ls "$DIR"/*.img.xz.txt 2>/dev/null | head -1 || true)
           [ -n "$COMP_IMG" ] && echo "comp_img_path=$COMP_IMG" >> "$GITHUB_OUTPUT" && echo "comp_img_name=$(basename "$COMP_IMG")" >> "$GITHUB_OUTPUT"
           [ -n "$COMP_SHA" ] && echo "comp_sha_path=$COMP_SHA" >> "$GITHUB_OUTPUT" && echo "comp_sha_name=$(basename "$COMP_SHA")" >> "$GITHUB_OUTPUT"
           [ -n "$COMP_TXT" ] && echo "comp_txt_path=$COMP_TXT" >> "$GITHUB_OUTPUT" && echo "comp_txt_name=$(basename "$COMP_TXT")" >> "$GITHUB_OUTPUT"
-          # 额外上传 rkspi_loader.img（若存在）
-          LOADER_FILE="$DIR/rkspi_loader.img"
-          if [ -f "$LOADER_FILE" ]; then
-            echo "loader_path=$LOADER_FILE" >> "$GITHUB_OUTPUT"
-            echo "loader_name=rkspi_loader.img" >> "$GITHUB_OUTPUT"
-          fi
+          if [ -f "$DIR/rkspi_loader.img" ]; then echo "loader_path=$DIR/rkspi_loader.img" >> "$GITHUB_OUTPUT" && echo "loader_name=rkspi_loader.img" >> "$GITHUB_OUTPUT"; fi
 
-      - name: Upload compressed image (.img.xz)
-        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.comp_img_path != ''
+      - name: Upload compressed image
+        if: steps.assets.outputs.comp_img_path != ''
         uses: actions/upload-release-asset@v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.assets.outputs.upload_url }}
+          upload_url: ${{ steps.resolve_upload.outputs.upload_url }}
           asset_path: ${{ steps.assets.outputs.comp_img_path }}
           asset_name: ${{ steps.assets.outputs.comp_img_name }}
           asset_content_type: application/x-xz
 
-      - name: Upload compressed checksum (.img.xz.sha)
-        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.comp_sha_path != ''
+      - name: Upload checksum
+        if: steps.assets.outputs.comp_sha_path != ''
         uses: actions/upload-release-asset@v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.assets.outputs.upload_url }}
+          upload_url: ${{ steps.resolve_upload.outputs.upload_url }}
           asset_path: ${{ steps.assets.outputs.comp_sha_path }}
           asset_name: ${{ steps.assets.outputs.comp_sha_name }}
           asset_content_type: text/plain
 
-      - name: Upload compressed info (.img.xz.txt)
-        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.comp_txt_path != ''
+      - name: Upload info txt
+        if: steps.assets.outputs.comp_txt_path != ''
         uses: actions/upload-release-asset@v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.assets.outputs.upload_url }}
+          upload_url: ${{ steps.resolve_upload.outputs.upload_url }}
           asset_path: ${{ steps.assets.outputs.comp_txt_path }}
           asset_name: ${{ steps.assets.outputs.comp_txt_name }}
           asset_content_type: text/plain
 
-      - name: Upload loader image (rkspi_loader.img)
-        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.loader_path != ''
+      - name: Upload loader image
+        if: steps.assets.outputs.loader_path != ''
         uses: actions/upload-release-asset@v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.assets.outputs.upload_url }}
+          upload_url: ${{ steps.resolve_upload.outputs.upload_url }}
           asset_path: ${{ steps.assets.outputs.loader_path }}
           asset_name: ${{ steps.assets.outputs.loader_name }}
           asset_content_type: application/octet-stream
 
       - name: Summary
-        if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
           echo "Tag: ${{ steps.tag-name.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Board: $BOARD" >> $GITHUB_STEP_SUMMARY
-          echo "Images:" >> $GITHUB_STEP_SUMMARY
+          echo "Release title (heading line): ${{ steps.changelog.outputs.title_line }}" >> $GITHUB_STEP_SUMMARY
+          echo "Images dir listing:" >> $GITHUB_STEP_SUMMARY
           ls -lh '${{ steps.build.outputs.images_dir }}' >> $GITHUB_STEP_SUMMARY
-
-      - name: Skipped summary
-        if: steps.changelog.outputs.skip_workflow == 'true'
-        run: echo "Skipped build for tag (board heading not found in CHANGELOG)" >> $GITHUB_STEP_SUMMARY
