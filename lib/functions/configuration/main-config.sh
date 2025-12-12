@@ -166,6 +166,19 @@ function do_main_configuration() {
 		check_filesystem_compatibility_on_host
 	fi
 
+
+	if [[ "${CRYPTROOT_ENABLE}" == "yes" && "${RK_AUTO_DECRYP}" == "yes" ]]; then
+		display_alert "Cryptroot" "Enable RK to automatically unlock encrypted containers" "info"
+		export CRYPTROOT_SSH_UNLOCK=no
+		export RK_SECURE_UBOOT_ENABLE=yes
+		enable_extension "rk-auto-decryption-disk"
+	fi
+
+	if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" ]]; then
+		display_alert "Secure U-Boot" "Enable Secure Boot Extensions" "info"
+		enable_extension "rk-secure-boot"
+	fi
+
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
