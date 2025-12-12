@@ -179,6 +179,12 @@ function do_main_configuration() {
 		enable_extension "rk-secure-boot"
 	fi
 
+	if [[ "${OTA_ENABLE}" == "yes" ]]; then
+		display_alert "OTA_ENABLE" "Enable OTA extension ota-support" "info"
+		enable_extension "ota-support"
+
+	fi
+
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
