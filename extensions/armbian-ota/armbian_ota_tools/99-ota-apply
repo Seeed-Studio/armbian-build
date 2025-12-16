@@ -165,14 +165,14 @@ fi
 
 log "found rootfs OTA payload, HAS_BOOT_PART=${HAS_BOOT_PART}, HAS_BOOT_TAR=${HAS_BOOT_TAR}"
 
-# ===== 2) clean rootfs (except ota_work) =====
-log "cleaning ${ROOT_MNT} (except ota_work)..."
+# ===== 2) clean rootfs (except ota_work and boot) =====
+log "cleaning ${ROOT_MNT} (except ota_work ota_work and boot)..."
 start_heartbeat "cleaning rootfs at ${ROOT_MNT}"
 (
     cd "${ROOT_MNT}" || exit 1
     for f in * .[!.]* ..?*; do
         case "$f" in
-            "."|".."|"ota_work")
+            "."|".."|"ota_work"|"boot")
                 continue
                 ;;
         esac
@@ -221,23 +221,23 @@ fi
 
 if [ "$DO_BOOT_OTA" -eq 1 ]; then
     # ===== 5) clean boot partition =====
-    log "cleaning ${BOOT_MNT} ..."
-    start_heartbeat "cleaning boot at ${BOOT_MNT}"
-    (
-        cd "${BOOT_MNT}" || exit 1
-        for f in * .[!.]* ..?*; do
-            case "$f" in
-                "."|"..")
-                    continue
-                    ;;
-            esac
-            rm -rf "$f"
-        done
-    ) || {
-        stop_heartbeat
-        log "WARN: failed to clean ${BOOT_MNT}, continue anyway"
-    }
-    stop_heartbeat
+    # log "cleaning ${BOOT_MNT} ..."
+    # start_heartbeat "cleaning boot at ${BOOT_MNT}"
+    # (
+    #     cd "${BOOT_MNT}" || exit 1
+    #     for f in * .[!.]* ..?*; do
+    #         case "$f" in
+    #             "."|"..")
+    #                 continue
+    #                 ;;
+    #         esac
+    #         rm -rf "$f"
+    #     done
+    # ) || {
+    #     stop_heartbeat
+    #     log "WARN: failed to clean ${BOOT_MNT}, continue anyway"
+    # }
+    # stop_heartbeat
 
     # ===== 6) extract boot.tar.gz =====
     log "extracting ${BOOT_TAR} -> ${BOOT_MNT} ..."

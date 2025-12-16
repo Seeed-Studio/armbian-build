@@ -38,6 +38,65 @@ if [ ! -f "${SRC_OTA}" ]; then
     exit 1
 fi
 
+# ===== helper: verify payload sha256 against provided .sha256 file (generated at build time) =====
+verify_sha256() {
+    local payload="$1"       # absolute or relative path to payload
+    local sha_file="$2"      # absolute or relative path to checksum file
+    local label="$3"         # log label
+
+    if [ ! -f "${payload}" ]; then
+        echo "ERROR: Missing ${label} payload: ${payload}" >&2
+        return 1
+    fi
+
+    if [ ! -f "${sha_file}" ]; then
+        echo "ERROR: Missing ${label} checksum file: ${sha_file}" >&2
+        return 1
+    fi
+
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo "ERROR: sha256sum not found; cannot verify ${label}" >&2
+        return 1
+    fi
+
+    # Run verification in the payload directory so that the checksum file can contain a basename.
+    local payload_dir
+    payload_dir="$(cd "$(dirname "${payload}")" && pwd)"
+    local payload_base
+    payload_base="$(basename "${payload}")"
+    local sha_dir
+    sha_dir="$(cd "$(dirname "${sha_file}")" && pwd)"
+    local sha_base
+    sha_base="$(basename "${sha_file}")"
+
+    # Ensure checksum file references the intended payload name.
+    # If it does not, create a temporary checksum file with corrected filename.
+    local tmp_sha=""
+    if ! grep -qE "[[:space:]]${payload_base}$" "${sha_dir}/${sha_base}"; then
+        tmp_sha="$(mktemp)"
+        # keep hash, replace filename with payload_base
+        awk -v f="${payload_base}" '{print $1"  "f}' "${sha_dir}/${sha_base}" > "${tmp_sha}" || return 1
+    fi
+
+    echo "[start_praper_ota] Verifying ${label} SHA256..."
+    if [ -n "${tmp_sha}" ]; then
+        (cd "${payload_dir}" && sha256sum -c "${tmp_sha}" >/dev/null) || {
+            echo "ERROR: ${label} SHA256 verification failed (payload=${payload_base})" >&2
+            rm -f "${tmp_sha}"
+            return 1
+        }
+        rm -f "${tmp_sha}"
+    else
+        (cd "${payload_dir}" && sha256sum -c "${sha_dir}/${sha_base}" >/dev/null) || {
+            echo "ERROR: ${label} SHA256 verification failed (payload=${payload_base})" >&2
+            return 1
+        }
+    fi
+
+    echo "[start_praper_ota] ${label} SHA256 OK"
+    return 0
+}
+
 # ===== Detect kernel version based on /boot/initrd.img-* =====
 detect_kver() {
     local files
@@ -90,8 +149,37 @@ detect_kver() {
     return 1
 }
 
+# ===== Pre-OTA checksum verification (stop OTA if mismatch) =====
+# Expected layout: OTA directory contains payloads plus pre-generated *.sha256 files
+# - rootfs.tar.gz + rootfs.sha256
+# - boot.tar.gz or boot.itb + boot.sha256
 
+ROOTFS_PAYLOAD="../rootfs.tar.gz"
+ROOTFS_SHA="../rootfs.sha256"
+BOOT_TAR_PAYLOAD="../boot.tar.gz"
+BOOT_ITB_PAYLOAD="../boot.itb"
+BOOT_SHA="../boot.sha256"
 
+# rootfs is mandatory
+verify_sha256 "${ROOTFS_PAYLOAD}" "${ROOTFS_SHA}" "rootfs.tar.gz" || {
+    echo "[start_praper_ota] ERROR: rootfs payload checksum mismatch; aborting OTA." >&2
+    exit 1
+}
+
+# boot is optional (either boot.tar.gz or boot.itb)
+if [ -f "${BOOT_ITB_PAYLOAD}" ]; then
+    verify_sha256 "${BOOT_ITB_PAYLOAD}" "${BOOT_SHA}" "boot.itb" || {
+        echo "[start_praper_ota] ERROR: boot.itb checksum mismatch; aborting OTA." >&2
+        exit 1
+    }
+elif [ -f "${BOOT_TAR_PAYLOAD}" ]; then
+    verify_sha256 "${BOOT_TAR_PAYLOAD}" "${BOOT_SHA}" "boot.tar.gz" || {
+        echo "[start_praper_ota] ERROR: boot.tar.gz checksum mismatch; aborting OTA." >&2
+        exit 1
+    }
+else
+    echo "[start_praper_ota] No boot payload found (boot.itb/boot.tar.gz). Continuing with rootfs-only OTA."
+fi
 
 # ===== mv ota package to /ota_work/ =====
 echo "[start_praper_ota] mv ota package to /ota_work/"

@@ -166,6 +166,9 @@ function pre_umount_final_image__901_create_ota_image() {
     local boot_tar="${ota_temp_dir}/boot.tar.gz"
     local rootfs_tar="${ota_temp_dir}/rootfs.tar.gz"
 
+    # SHA256 checksum files to be included in final OTA tarball
+    local boot_sha_file="${ota_temp_dir}/boot.sha256"
+    local rootfs_sha_file="${ota_temp_dir}/rootfs.sha256"
 
     # Handle boot partition content
     if [[ "$secure_boot_and_decrypt" == "yes" ]]; then
@@ -178,6 +181,15 @@ function pre_umount_final_image__901_create_ota_image() {
             if cp "$boot_itb_source" "${ota_temp_dir}/boot.itb"; then
                 local boot_itb_size=$(stat -c%s "${ota_temp_dir}/boot.itb")
                 display_alert "FIT boot image copied" "boot.itb size: $((boot_itb_size / 1024)) KB" "info"
+
+                # Generate SHA256 for boot.itb
+                if command -v sha256sum >/dev/null 2>&1; then
+                    (cd "${ota_temp_dir}" && sha256sum "boot.itb" > "${boot_sha_file}") || {
+                        display_alert "Warning: Failed to generate SHA256 for boot.itb" "${boot_sha_file}" "warn"
+                    }
+                else
+                    display_alert "Warning: sha256sum not available; skipping boot.itb SHA256" "" "warn"
+                fi
             else
                 display_alert "Warning: Failed to copy boot.itb" "" "warn"
             fi
@@ -194,6 +206,15 @@ function pre_umount_final_image__901_create_ota_image() {
                 display_alert "Boot content archived" "boot.tar.gz size: $((boot_tar_size / 1024)) KB" "info"
                 display_alert "Boot partition contents" "Found $(find "$boot_mount" -type f | wc -l) files" "debug"
                 extract_boot=true
+
+                # Generate SHA256 for boot.tar.gz
+                if command -v sha256sum >/dev/null 2>&1; then
+                    (cd "${ota_temp_dir}" && sha256sum "boot.tar.gz" > "${boot_sha_file}") || {
+                        display_alert "Warning: Failed to generate SHA256 for boot.tar.gz" "${boot_sha_file}" "warn"
+                    }
+                else
+                    display_alert "Warning: sha256sum not available; skipping boot.tar.gz SHA256" "" "warn"
+                fi
             else
                 umount "$boot_mount" 2>/dev/null || true
                 display_alert "Warning: Failed to create boot.tar.gz" "" "warn"
@@ -231,6 +252,15 @@ function pre_umount_final_image__901_create_ota_image() {
             display_alert "Rootfs content archived" "rootfs.tar.gz size: $((rootfs_tar_size / 1024 / 1024)) MB" "info"
             display_alert "Rootfs partition contents" "Found $(find "$rootfs_mount" -type f | wc -l) files" "debug"
             extract_rootfs=true
+
+            # Generate SHA256 for rootfs.tar.gz
+            if command -v sha256sum >/dev/null 2>&1; then
+                (cd "${ota_temp_dir}" && sha256sum "rootfs.tar.gz" > "${rootfs_sha_file}") || {
+                    display_alert "Warning: Failed to generate SHA256 for rootfs.tar.gz" "${rootfs_sha_file}" "warn"
+                }
+            else
+                display_alert "Warning: sha256sum not available; skipping rootfs.tar.gz SHA256" "" "warn"
+            fi
         else
             umount "$rootfs_mount" 2>/dev/null || true
             display_alert "Error: Failed to create rootfs.tar.gz" "" "err"
@@ -261,19 +291,42 @@ function pre_umount_final_image__901_create_ota_image() {
         return 1
     fi
 
-    # Verify boot image
+    # Verify SHA256 sums if generated
+    if [[ -f "${rootfs_sha_file}" ]]; then
+        if ! (cd "${ota_temp_dir}" && sha256sum -c "$(basename "${rootfs_sha_file}")" >/dev/null 2>&1); then
+            display_alert "Error: rootfs.tar.gz SHA256 verification failed" "${rootfs_sha_file}" "err"
+            return 1
+        fi
+    fi
+
     if [[ "$secure_boot_and_decrypt" == "yes" && -f "${ota_temp_dir}/boot.itb" ]]; then
         # Verify boot.itb exists and is readable
         if [[ ! -r "${ota_temp_dir}/boot.itb" ]]; then
             display_alert "Error: boot.itb is not readable" "" "err"
             return 1
         fi
+
+        if [[ -f "${boot_sha_file}" ]]; then
+            if ! (cd "${ota_temp_dir}" && sha256sum -c "$(basename "${boot_sha_file}")" >/dev/null 2>&1); then
+                display_alert "Error: boot.itb SHA256 verification failed" "${boot_sha_file}" "err"
+                return 1
+            fi
+        fi
+
         display_alert "Archive verification completed" "boot.itb and rootfs.tar.gz are valid" "info"
     elif [[ -f "$boot_tar" ]]; then
         if ! tar -tzf "$boot_tar" >/dev/null 2>&1; then
             display_alert "Error: boot.tar.gz is corrupted or invalid" "" "err"
             return 1
         fi
+
+        if [[ -f "${boot_sha_file}" ]]; then
+            if ! (cd "${ota_temp_dir}" && sha256sum -c "$(basename "${boot_sha_file}")" >/dev/null 2>&1); then
+                display_alert "Error: boot.tar.gz SHA256 verification failed" "${boot_sha_file}" "err"
+                return 1
+            fi
+        fi
+
         display_alert "Archive verification completed" "boot.tar.gz and rootfs.tar.gz are valid" "info"
     else
         display_alert "Archive verification completed" "rootfs.tar.gz is valid (no boot partition found)" "info"
