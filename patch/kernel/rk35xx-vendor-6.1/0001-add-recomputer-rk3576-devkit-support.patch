@@ -1,34 +1,33 @@
-From a8700e896d643dffcec05c677af2839526091867 Mon Sep 17 00:00:00 2001
+From d48e3ca03fd5e86e5b4dd33c11aef8118a904ed2 Mon Sep 17 00:00:00 2001
 From: ackPeng <1143590135@qq.com>
-Date: Fri, 16 Jan 2026 16:46:25 +0800
+Date: Tue, 24 Feb 2026 09:24:44 +0800
 Subject: [PATCH] add recomputer rk3576-devkit support
 
 ---
  arch/arm64/boot/dts/rockchip/Makefile         |    2 +-
- arch/arm64/boot/dts/rockchip/overlay/Makefile |   12 +-
+ arch/arm64/boot/dts/rockchip/overlay/Makefile |   10 +-
  .../recomputer-rk3576-devkit-40pin-can0.dts   |   23 +
  .../recomputer-rk3576-devkit-40pin-can1.dts   |   23 +
  .../recomputer-rk3576-devkit-40pin-i2c3.dts   |   25 +
  ...ecomputer-rk3576-devkit-40pin-pwm2-ch6.dts |   24 +
  .../recomputer-rk3576-devkit-40pin-uart3.dts  |   23 +
  .../recomputer-rk3576-devkit-40pin-uart5.dts  |   34 +
- .../recomputer-rk3576-devkit-cam0-imx219.dts  |  255 ++++
- .../recomputer-rk3576-devkit-cam1-imx219.dts  |  254 ++++
- .../recomputer-rk3576-devkit-halow-wifi.dts   |   39 +
- ...-rk3576-devkit-raspi-7inch-touchscreen.dts |  149 +++
- .../rk3576-recomputer-rk3576-devkit.dts       | 1182 +++++++++++++++++
+ .../recomputer-rk3576-devkit-halow-wifi.dts   |   52 +
+ ...-rk3576-devkit-raspi-7inch-touchscreen.dts |  149 ++
+ .../recomputer-rk3576-devkit-cam.dtsi         |  600 ++++++++
+ .../rk3576-recomputer-rk3576-devkit.dts       | 1201 +++++++++++++++++
+ drivers/media/i2c/imx219.c                    |   22 +-
  drivers/usb/typec/tcpm/fusb302.c              |   16 +-
- 14 files changed, 2057 insertions(+), 4 deletions(-)
+ 14 files changed, 2194 insertions(+), 10 deletions(-)
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-40pin-can0.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-40pin-can1.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-40pin-i2c3.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-40pin-pwm2-ch6.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-40pin-uart3.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-40pin-uart5.dts
- create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam0-imx219.dts
- create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam1-imx219.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-halow-wifi.dts
  create mode 100644 arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-raspi-7inch-touchscreen.dts
+ create mode 100644 arch/arm64/boot/dts/rockchip/recomputer-rk3576-devkit-cam.dtsi
  create mode 100644 arch/arm64/boot/dts/rockchip/rk3576-recomputer-rk3576-devkit.dts
 
 diff --git a/arch/arm64/boot/dts/rockchip/Makefile b/arch/arm64/boot/dts/rockchip/Makefile
@@ -45,17 +44,15 @@ index 38aaab5b2661..a19267f1115f 100644
  
  # Armbian: Incremental: assuming overlay targets are already in the Makefile
 diff --git a/arch/arm64/boot/dts/rockchip/overlay/Makefile b/arch/arm64/boot/dts/rockchip/overlay/Makefile
-index 63b191d4a364..bc78b03c842a 100644
+index 63b191d4a364..16df351a40f1 100644
 --- a/arch/arm64/boot/dts/rockchip/overlay/Makefile
 +++ b/arch/arm64/boot/dts/rockchip/overlay/Makefile
-@@ -285,7 +285,17 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
+@@ -285,7 +285,15 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
  	rk3568-uart8-m1.dtbo \
  	rk3568-uart9-m1.dtbo \
  	rk3568-w1-gpio3-a5.dtbo \
 -	rk3568-w1-gpio3-d1.dtbo
 +	rk3568-w1-gpio3-d1.dtbo \
-+	recomputer-rk3576-devkit-cam0-imx219.dtbo \
-+	recomputer-rk3576-devkit-cam1-imx219.dtbo \
 +	recomputer-rk3576-devkit-raspi-7inch-touchscreen.dtbo \
 +	recomputer-rk3576-devkit-40pin-pwm2-ch6.dtbo \
 +	recomputer-rk3576-devkit-40pin-can0.dtbo \
@@ -255,533 +252,12 @@ index 000000000000..d96b22c0b2df
 +	};
 +};
 +
-diff --git a/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam0-imx219.dts b/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam0-imx219.dts
-new file mode 100644
-index 000000000000..620c7226744d
---- /dev/null
-+++ b/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam0-imx219.dts
-@@ -0,0 +1,255 @@
-+/dts-v1/;
-+/plugin/;
-+
-+#include <dt-bindings/usb/pd.h>
-+#include <dt-bindings/gpio/gpio.h>
-+#include <dt-bindings/pwm/pwm.h>
-+#include <dt-bindings/pinctrl/rockchip.h>
-+#include <dt-bindings/input/rk-input.h>
-+#include <dt-bindings/display/drm_mipi_dsi.h>
-+#include <dt-bindings/display/rockchip_vop.h>
-+#include <dt-bindings/sensor-dev.h>
-+#include <dt-bindings/gpio/gpio.h>
-+#include <dt-bindings/pinctrl/rockchip.h>
-+
-+/ {
-+	
-+	fragment@0 {
-+		target-path = "/";
-+
-+		__overlay__ {
-+
-+			cam0_pwr: cam0-pwr {
-+				compatible = "regulator-fixed";
-+				regulator-name = "cam0_pwr";
-+				regulator-min-microvolt = <3300000>;
-+				regulator-max-microvolt = <3300000>;
-+				enable-active-high;
-+				gpio = <&gpio_xten  0  GPIO_ACTIVE_HIGH>; 
-+				regulator-boot-on;         
-+				regulator-always-on;        
-+			};
-+
-+			clk_cam0_24m: external-camera0-clock-24m {
-+				compatible = "fixed-clock";
-+				clock-frequency = <24000000>;
-+				clock-output-names = "clk_cam0_24m";
-+				#clock-cells = <0>;
-+			};
-+		};
-+	};
-+
-+	fragment@1 {
-+		target = <&i2c7>;
-+
-+		__overlay__ {
-+			status = "okay";
-+			pinctrl-0 = <&i2c7m1_xfer>;
-+			camera0_imx219: imx219@10 {
-+				compatible = "sony,imx219";
-+				reg = <0x10>;
-+
-+				clocks = <&clk_cam0_24m>;
-+				clock-names = "xvclk";
-+				vana-supply = <&cam0_pwr>;
-+				rockchip,camera-module-index = <0>;
-+				rockchip,camera-module-facing = "back";
-+				rockchip,camera-module-name = "rpi-camera-v2";
-+				rockchip,camera-module-lens-name = "default";
-+
-+				port {
-+					imx219_out0: endpoint {
-+						remote-endpoint = <&mipi_in_ucam0>;
-+						data-lanes = <1 2>;					
-+					};
-+				};
-+			};
-+		};
-+	};
-+
-+
-+	fragment@2 {
-+		target = <&csi2_dcphy0>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		
-+			ports {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+				port@0 {
-+					reg = <0>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					mipi_in_ucam0: endpoint@0 {
-+						// reg = <1>;
-+						remote-endpoint = <&imx219_out0>;
-+						data-lanes = <1 2>;					
-+					};
-+				};
-+
-+				port@1 {
-+					reg = <1>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					csidcphy0_out: endpoint@1 {
-+						// reg = <0>;
-+						remote-endpoint = <&mipi0_csi2_input>;
-+					};
-+				};
-+			};
-+
-+		};
-+	};
-+
-+	fragment@3 {
-+		target = <&mipi0_csi2>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			ports {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+		
-+				port@0 {
-+					reg = <0>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					mipi0_csi2_input: endpoint@0 {
-+						// reg = <0>;
-+						data-lanes = <1 2>;		
-+						remote-endpoint = <&csidcphy0_out>;
-+					};
-+				};
-+		
-+				port@1 {
-+					reg = <1>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					mipi0_csi2_output: endpoint@1 {
-+						// reg = <1>;
-+						remote-endpoint = <&cif_mipi_in0>;
-+					};
-+				};
-+			};
-+
-+		};
-+	};
-+
-+	fragment@4 {
-+		target = <&rkcif>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@5 {
-+		target = <&rkcif_mipi_lvds>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			port {
-+				cif_mipi_in0: endpoint {
-+					remote-endpoint = <&mipi0_csi2_output>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@6 {
-+		target = <&rkcif_mipi_lvds_sditf>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			port {
-+				mipi_lvds_sditf: endpoint {
-+					remote-endpoint = <&isp_vir0>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@7 {
-+		target = <&rkcif_mmu>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@8{
-+		target = <&rkisp_mmu>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@9 {
-+		target = <&rkisp>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@10 {
-+		target = <&rkisp_vir0>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			port {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+
-+				isp_vir0: endpoint@0 {
-+					reg = <0>;
-+					remote-endpoint = <&mipi_lvds_sditf>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@11 {
-+		target = <&rkisp_vir0_sditf>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@12 {
-+		target = <&rkvpss>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@13 {
-+		target = <&rkvpss_mmu>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@14 {
-+		target = <&rkvpss_vir0>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	
-+};
-diff --git a/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam1-imx219.dts b/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam1-imx219.dts
-new file mode 100644
-index 000000000000..f5ffe0305d0f
---- /dev/null
-+++ b/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-cam1-imx219.dts
-@@ -0,0 +1,254 @@
-+/dts-v1/;
-+/plugin/;
-+
-+#include <dt-bindings/usb/pd.h>
-+#include <dt-bindings/gpio/gpio.h>
-+#include <dt-bindings/pwm/pwm.h>
-+#include <dt-bindings/pinctrl/rockchip.h>
-+#include <dt-bindings/input/rk-input.h>
-+#include <dt-bindings/display/drm_mipi_dsi.h>
-+#include <dt-bindings/display/rockchip_vop.h>
-+#include <dt-bindings/sensor-dev.h>
-+#include <dt-bindings/gpio/gpio.h>
-+#include <dt-bindings/pinctrl/rockchip.h>
-+
-+/ {
-+	
-+	fragment@0 {
-+		target-path = "/";
-+
-+		__overlay__ {
-+
-+			cam1_pwr: cam1-pwr {
-+				compatible = "regulator-fixed";
-+				regulator-name = "cam1_pwr";
-+				regulator-min-microvolt = <3300000>;
-+				regulator-max-microvolt = <3300000>;
-+				enable-active-high;
-+				gpio = <&gpio1  RK_PD1  GPIO_ACTIVE_HIGH>; 
-+				regulator-boot-on;         
-+				regulator-always-on;        
-+			};
-+
-+			clk_cam1_24m: external-camera1-clock-24m {
-+				compatible = "fixed-clock";
-+				clock-frequency = <24000000>;
-+				clock-output-names = "clk_cam1_24m";
-+				#clock-cells = <0>;
-+			};
-+		};
-+	};
-+
-+	fragment@1 {
-+		target = <&i2c2>;
-+
-+		__overlay__ {
-+			status = "okay";
-+			camera1_imx219: imx219@10 {
-+				compatible = "sony,imx219";
-+				reg = <0x10>;
-+
-+				clocks = <&clk_cam1_24m>;
-+				clock-names = "xvclk";
-+				vana-supply = <&cam1_pwr>;
-+				rockchip,camera-module-index = <0>;
-+				rockchip,camera-module-facing = "back";
-+				rockchip,camera-module-name = "rpi-camera-v2";
-+				rockchip,camera-module-lens-name = "default";
-+
-+				port {
-+					imx219_out1: endpoint {
-+						remote-endpoint = <&mipi_in_ucam1>;
-+						data-lanes = <1 2>;					
-+					};
-+				};
-+			};
-+		};
-+	};
-+
-+
-+	fragment@2 {
-+		target = <&csi2_dphy0>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		
-+			ports {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+				port@0 {
-+					reg = <0>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					mipi_in_ucam1: endpoint@0 {
-+						// reg = <1>;
-+						remote-endpoint = <&imx219_out1>;
-+						data-lanes = <1 2>;					
-+					};
-+				};
-+
-+				port@1 {
-+					reg = <1>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					csidphy0_out: endpoint@1 {
-+						// reg = <0>;
-+						remote-endpoint = <&mipi1_csi2_input>;
-+					};
-+				};
-+			};
-+
-+		};
-+	};
-+
-+	fragment@3 {
-+		target = <&mipi1_csi2>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			ports {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+		
-+				port@0 {
-+					reg = <0>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					mipi1_csi2_input: endpoint@0 {
-+						// reg = <0>;
-+						data-lanes = <1 2>;		
-+						remote-endpoint = <&csidphy0_out>;
-+					};
-+				};
-+		
-+				port@1 {
-+					reg = <1>;
-+					#address-cells = <1>;
-+					#size-cells = <0>;
-+		
-+					mipi1_csi2_output: endpoint@1 {
-+						// reg = <1>;
-+						remote-endpoint = <&cif1_mipi_in0>;
-+					};
-+				};
-+			};
-+
-+		};
-+	};
-+
-+	fragment@4 {
-+		target = <&rkcif>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@5 {
-+		target = <&rkcif_mipi_lvds1>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			port {
-+				cif1_mipi_in0: endpoint {
-+					remote-endpoint = <&mipi1_csi2_output>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@6 {
-+		target = <&rkcif_mipi_lvds1_sditf>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			port {
-+				mipi_lvds1_sditf: endpoint {
-+					remote-endpoint = <&isp_vir1>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@7 {
-+		target = <&rkcif_mmu>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@8{
-+		target = <&rkisp_mmu>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@9 {
-+		target = <&rkisp>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@10 {
-+		target = <&rkisp_vir1>;
-+
-+		__overlay__ {
-+			status = "okay";
-+
-+			port {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+
-+				isp_vir1: endpoint@0 {
-+					reg = <0>;
-+					remote-endpoint = <&mipi_lvds1_sditf>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@11 {
-+		target = <&rkisp_vir1_sditf>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@12 {
-+		target = <&rkvpss>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@13 {
-+		target = <&rkvpss_mmu>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	fragment@14 {
-+		target = <&rkvpss_vir1>;
-+
-+		__overlay__ {
-+			status = "okay";
-+		};
-+	};
-+
-+	
-+};
 diff --git a/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-halow-wifi.dts b/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-halow-wifi.dts
 new file mode 100644
-index 000000000000..8eec947ebf83
+index 000000000000..a2ef3ada562b
 --- /dev/null
 +++ b/arch/arm64/boot/dts/rockchip/overlay/recomputer-rk3576-devkit-halow-wifi.dts
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,52 @@
 +/dts-v1/;
 +/plugin/;
 +#include <dt-bindings/usb/pd.h>
@@ -818,6 +294,19 @@ index 000000000000..8eec947ebf83
 +            };
 +		};
 +	};
++
++
++	fragment@1 {
++		target = <&gpio_xten>;
++		__overlay__ {
++			lte_reset_hog: lte-reset-hog {
++				gpio-hog;
++				gpios = <4 GPIO_ACTIVE_HIGH>;
++				output-high;              
++				line-name = "lte_reset";
++		};
++	};
++};
 +
 +};
 +
@@ -976,12 +465,618 @@ index 000000000000..394c64c5b0d8
 +
 +
 +};
+diff --git a/arch/arm64/boot/dts/rockchip/recomputer-rk3576-devkit-cam.dtsi b/arch/arm64/boot/dts/rockchip/recomputer-rk3576-devkit-cam.dtsi
+new file mode 100644
+index 000000000000..31f0f4572b45
+--- /dev/null
++++ b/arch/arm64/boot/dts/rockchip/recomputer-rk3576-devkit-cam.dtsi
+@@ -0,0 +1,600 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * Copyright (c) 2024 Luckfox Technology Co., Ltd.
++ *
++ */
++
++/ {
++    cam_ircut0: cam_ircut0 {
++        status = "okay";
++        compatible = "rockchip,ircut";
++        led-gpios = <&gpio3 RK_PC7 GPIO_ACTIVE_LOW>;
++        // ircut-open-gpios = <&gpio4 RK_PC6 GPIO_ACTIVE_HIGH>;
++        // ircut-close-gpios  = <&gpio4 RK_PC7 GPIO_ACTIVE_HIGH>;
++        rockchip,camera-module-index = <0>;
++        rockchip,camera-module-facing = "front";
++    };
++
++    cam_ircut1: cam_ircut1 {
++        status = "okay";
++        compatible = "rockchip,ircut";
++        led-gpios = <&gpio1 RK_PD0 GPIO_ACTIVE_LOW>;
++        // ircut-open-gpios = <&gpio4 RK_PC6 GPIO_ACTIVE_HIGH>;
++        // ircut-close-gpios  = <&gpio4 RK_PC7 GPIO_ACTIVE_HIGH>;
++        rockchip,camera-module-index = <1>;
++        rockchip,camera-module-facing = "back";
++    };
++
++    cam0_pwr: cam0-pwr {
++        compatible = "regulator-fixed";
++        regulator-name = "cam0_pwr";
++        regulator-min-microvolt = <3300000>;
++        regulator-max-microvolt = <3300000>;
++        enable-active-high;
++        gpio = <&gpio_xten  0  GPIO_ACTIVE_HIGH>; 
++        regulator-boot-on;         
++        regulator-always-on;        
++    };
++
++    cam1_pwr: cam1-pwr {
++        compatible = "regulator-fixed";
++        regulator-name = "cam1_pwr";
++        regulator-min-microvolt = <3300000>;
++        regulator-max-microvolt = <3300000>;
++        enable-active-high;
++        gpio = <&gpio1  RK_PD1  GPIO_ACTIVE_HIGH>; 
++        regulator-boot-on;         
++        regulator-always-on;        
++    };
++    
++    clk_cam_24m: external-camera-clock-24m {
++        compatible = "fixed-clock";
++        clock-frequency = <24000000>;
++        clock-output-names = "clk_cam_24m";
++        #clock-cells = <0>;
++    };
++
++    clk_cam_24m_1: external-camera-clock-24m-1 {
++        compatible = "fixed-clock";
++        clock-frequency = <24000000>;
++        clock-output-names = "clk_cam_24m_1";
++        #clock-cells = <0>;
++    };
++
++    clk_cam_25m: external-camera-clock-25m {
++        compatible = "fixed-clock";
++        clock-frequency = <25000000>;
++        clock-output-names = "clk_cam_25m";
++        #clock-cells = <0>;
++    };
++
++    clk_cam_25m_1: external-camera-clock-25m-1 {
++        compatible = "fixed-clock";
++        clock-frequency = <25000000>;
++        clock-output-names = "clk_cam_25m_1";
++        #clock-cells = <0>;
++    };
++
++};
++
++// cam0: i2c7
++&i2c7 {
++	status = "okay";
++	pinctrl-0 = <&i2c7m1_xfer>;
++
++	imx415_0: imx415_0@37 {
++		status = "okay";
++		compatible = "sony,imx415";
++		reg = <0x37>;
++		clocks = <&cru CLK_MIPI_CAMERAOUT_M0>;
++		clock-names = "xvclk";
++		pinctrl-names = "default";
++		// pinctrl-0 = <&cam0_reset_gpio>;
++		power-domains = <&power RK3576_PD_VI>;
++		// reset-gpios = <&gpio3 RK_PD7 GPIO_ACTIVE_LOW>;
++		rockchip,camera-module-index = <0>;
++		rockchip,camera-module-facing = "back";
++		rockchip,camera-module-name = "CMK-OT2022-PX1";
++		rockchip,camera-module-lens-name = "IR0147-50IRC-8M-F20";
++		lens-focus = <&cam_ircut0>;
++		port {
++			imx415_out0: endpoint {
++				remote-endpoint = <&mipi_in_ucam0>;
++				data-lanes = <1 2 3 4>;
++			};
++		};
++	};
++
++    imx219_0: imx219@10 {
++        compatible = "sony,imx219";
++        reg = <0x10>;
++        clocks = <&clk_cam_24m>;
++        clock-names = "xvclk";
++        vana-supply = <&cam0_pwr>;
++        rockchip,camera-module-index = <0>;
++        rockchip,camera-module-facing = "back";
++        rockchip,camera-module-name = "rpi-camera-v2";
++        rockchip,camera-module-lens-name = "default";
++
++        port {
++            imx219_out0: endpoint {
++                remote-endpoint = <&mipi_in_ucam2>;
++                data-lanes = <1 2>;					
++            };
++        };
++    };
++
++
++	dw9817_0: dw9817@c {
++		compatible = "dongwoon,dw9817";
++		status = "okay";
++		reg = <0x0c>;
++		rockchip,camera-module-index = <0>;
++		rockchip,vcm-start-current = <10>;
++		rockchip,vcm-rated-current = <85>;
++		rockchip,vcm-step-mode = <5>;
++		rockchip,camera-module-facing = "back";
++
++	};
++
++	imx708_0: imx708@1a {
++		compatible = "sony,imx708";
++		reg = <0x1a>;
++		clocks = <&clk_cam_24m>;
++		clock-names = "xclk";
++		vana1-supply = <&cam0_pwr>;
++		pinctrl-names = "default";
++
++		// reset-gpios = <&gpio 35 GPIO_ACTIVE_LOW>;
++		rockchip,camera-module-index = <0>;
++		rockchip,camera-module-facing = "front";
++		rockchip,camera-module-name = "rpi-camera-v3";
++		rockchip,camera-module-lens-name = "default";
++		lens-focus = <&dw9817_0>;
++		port {
++            imx708_out0: endpoint {
++                remote-endpoint = <&mipi_in_ucam4>;
++                data-lanes = <1 2>;
++                link-frequencies = /bits/ 64 <450000000>;
++            };
++		};
++	};
++
++	/**************raspberry pi cam v1**************/
++ 	ad5398_0: ad5398@c {
++		compatible = "adi,ad5398";
++		status = "okay";
++		reg = <0x0c>;
++		rockchip,camera-module-index = <0>;
++		rockchip,vcm-start-current = <10>;
++		rockchip,vcm-rated-current = <85>;
++		rockchip,vcm-step-mode = <5>;
++		rockchip,camera-module-facing = "front";
++	};
++
++	ov5647_0: ov5647@36 {
++		compatible = "ovti,ov5647";
++		status = "okay";
++		reg = <0x36>;
++		clocks = <&clk_cam_25m>;
++		vana1-supply = <&cam0_pwr>;
++		// pwdn-gpios = <&gpio_xten  0  GPIO_ACTIVE_HIGH>; 
++
++		clock-names = "xvclk";
++		pinctrl-names = "default";
++		rockchip,camera-module-index = <0>;
++		rockchip,camera-module-facing = "front";
++		rockchip,camera-module-name = "rpi-camera-v1p3";
++		rockchip,camera-module-lens-name = "default";
++		lens-focus = <&ad5398_0>;
++		port {
++			ov5647_out0: endpoint {
++				remote-endpoint = <&mipi_in_ucam6>;
++				data-lanes = <1 2>;
++			};
++		};
++	};
++
++
++};
++
++// cam1: i2c2
++&i2c2 {
++	status = "okay";
++
++	imx415_1: imx415_1@37 {
++		compatible = "sony,imx415";
++		reg = <0x37>;
++		clocks = <&cru CLK_MIPI_CAMERAOUT_M1>;
++		clock-names = "xvclk";
++		pinctrl-names = "default";
++		// pinctrl-0 = <&cam1_reset_gpio>;
++		power-domains = <&power RK3576_PD_VI>;
++        // reset-gpios = <&gpio3 RK_PC7 GPIO_ACTIVE_LOW>;
++		rockchip,camera-module-index = <1>;
++		rockchip,camera-module-facing = "front";
++		rockchip,camera-module-name = "CMK-OT2022-PX1";
++		rockchip,camera-module-lens-name = "IR0147-50IRC-8M-F20";
++		lens-focus = <&cam_ircut1>;
++		port {
++			imx415_out1: endpoint {
++				remote-endpoint = <&mipi_in_ucam1>;
++				data-lanes = <1 2 3 4>;
++			};
++		};
++	};
++
++    imx219_1: imx219@10 {
++        compatible = "sony,imx219";
++        reg = <0x10>;
++
++        clocks = <&clk_cam_24m_1>;
++        clock-names = "xvclk";
++        vana-supply = <&cam1_pwr>;
++       	rockchip,camera-module-index = <1>;
++        rockchip,camera-module-facing = "back";
++        rockchip,camera-module-name = "rpi-camera-v2";
++        rockchip,camera-module-lens-name = "default";
++
++        port {
++            imx219_out1: endpoint {
++                remote-endpoint = <&mipi_in_ucam3>;
++                data-lanes = <1 2>;					
++            };
++        };
++    };
++
++ /**************raspberry pi cam v3**************/
++	dw9817_1: dw9817@c {
++		compatible = "dongwoon,dw9817";
++		status = "okay";
++		reg = <0x0c>;
++		rockchip,camera-module-index = <1>;
++		rockchip,vcm-start-current = <10>;
++		rockchip,vcm-rated-current = <85>;
++		rockchip,vcm-step-mode = <5>;
++		rockchip,camera-module-facing = "back";
++
++	};
++
++	imx708_1: imx708@1a {
++		compatible = "sony,imx708";
++		reg = <0x1a>;
++		clocks = <&clk_cam_24m_1>;
++		clock-names = "xclk";
++		// reset-gpios = <&gpio 35 GPIO_ACTIVE_LOW>;
++		vana1-supply = <&cam1_pwr>;
++		pinctrl-names = "default";
++		rockchip,camera-module-index = <1>;
++		rockchip,camera-module-facing = "front";
++		rockchip,camera-module-name = "rpi-camera-v3";
++		rockchip,camera-module-lens-name = "default";
++		lens-focus = <&dw9817_1>;
++		port {
++            imx708_out1: endpoint {
++                remote-endpoint = <&mipi_in_ucam5>;
++                data-lanes = <1 2>;
++                link-frequencies = /bits/ 64 <450000000>;
++				
++            };
++		};
++	};
++
++ /**************raspberry pi cam v1**************/
++ 	ad5398_1: ad5398@c {
++		compatible = "adi,ad5398";
++		status = "okay";
++		reg = <0x0c>;
++		rockchip,camera-module-index = <1>;
++		rockchip,vcm-start-current = <10>;
++		rockchip,vcm-rated-current = <85>;
++		rockchip,vcm-step-mode = <5>;
++		rockchip,camera-module-facing = "front";
++	};
++
++	ov5647_1: ov5647@36 {
++		compatible = "ovti,ov5647";
++		status = "okay";
++		reg = <0x36>;
++		clocks = <&clk_cam_25m_1>;
++		vana1-supply = <&cam1_pwr>;
++		// pwdn-gpios = <&gpio1  RK_PD1  GPIO_ACTIVE_HIGH>; 
++
++		clock-names = "xvclk";
++		pinctrl-names = "default";
++		rockchip,camera-module-index = <1>;
++		rockchip,camera-module-facing = "front";
++		rockchip,camera-module-name = "rpi-camera-v1p3";
++		rockchip,camera-module-lens-name = "default";
++		lens-focus = <&ad5398_1>;
++		port {
++			ov5647_out1: endpoint {
++				remote-endpoint = <&mipi_in_ucam7>;
++				data-lanes = <1 2>;
++			};
++		};
++	};
++
++};
++
++/*-----------------------------------------------------------------------*/
++
++&csi2_dcphy0 {
++	status = "okay";
++
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		port@0 {
++			reg = <0>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			mipi_in_ucam0: endpoint@1 {
++				reg = <1>;
++				remote-endpoint = <&imx415_out0>;
++				data-lanes = <1 2 3 4>;
++			};
++			mipi_in_ucam2: endpoint@2 {
++				reg = <2>;
++				remote-endpoint = <&imx219_out0>;
++				data-lanes = <1 2>;
++			};
++
++			mipi_in_ucam4: endpoint@3 {
++				reg = <3>;
++				remote-endpoint = <&imx708_out0>;
++				data-lanes = <1 2>;
++			};
++
++			mipi_in_ucam6: endpoint@4 {
++				reg = <4>;
++				remote-endpoint = <&ov5647_out0>;
++				data-lanes = <1 2>;
++			};
++
++		};
++		port@1 {
++			reg = <1>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			csidcphy0_out: endpoint@0 {
++				reg = <0>;
++				remote-endpoint = <&mipi0_csi2_input>;
++			};
++		};
++	};
++};
++
++&csi2_dphy0 {
++	status = "okay";
++
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		port@0 {
++			reg = <0>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			mipi_in_ucam1: endpoint@1 {
++				reg = <1>;
++				remote-endpoint = <&imx415_out1>;
++				data-lanes = <1 2 3 4>;
++			};
++			mipi_in_ucam3: endpoint@2 {
++				reg = <2>;
++				remote-endpoint = <&imx219_out1>;
++				data-lanes = <1 2>;
++			};
++			mipi_in_ucam5: endpoint@3 {
++				reg = <3>;
++				remote-endpoint = <&imx708_out1>;
++				data-lanes = <1 2>;
++			};
++			mipi_in_ucam7: endpoint@4 {
++				reg = <4>;
++				remote-endpoint = <&ov5647_out1>;
++				data-lanes = <1 2>;
++			};
++
++		};
++		port@1 {
++			reg = <1>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			csidphy0_out: endpoint@0 {
++				reg = <0>;
++				remote-endpoint = <&mipi1_csi2_input>;
++			};
++		};
++	};
++};
++
++&csi2_dphy3 {
++    status = "disabled";
++};
++
++/*-----------------------------------------------------------------------*/
++
++&mipi0_csi2 {
++	status = "okay";
++
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			mipi0_csi2_input: endpoint@1 {
++				reg = <1>;
++				remote-endpoint = <&csidcphy0_out>;
++			};
++		};
++
++		port@1 {
++			reg = <1>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			mipi0_csi2_output: endpoint@0 {
++				reg = <0>;
++				remote-endpoint = <&cif_mipi_in0>;
++			};
++		};
++	};
++};
++
++&mipi1_csi2 {
++	status = "okay";
++
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			mipi1_csi2_input: endpoint@1 {
++				reg = <1>;
++				remote-endpoint = <&csidphy0_out>;
++			};
++		};
++
++		port@1 {
++			reg = <1>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			mipi1_csi2_output: endpoint@0 {
++				reg = <0>;
++				remote-endpoint = <&cif_mipi_in1>;
++			};
++		};
++	};
++};
++
++/*-----------------------------------------------------------------------*/
++
++&rkcif_mipi_lvds {
++	status = "okay";
++
++	port {
++		cif_mipi_in0: endpoint {
++			remote-endpoint = <&mipi0_csi2_output>;
++		};
++	};
++};
++
++&rkcif_mipi_lvds1 {
++	status = "okay";
++
++	port {
++		cif_mipi_in1: endpoint {
++			remote-endpoint = <&mipi1_csi2_output>;
++		};
++	};
++};
++
++/*-----------------------------------------------------------------------*/
++
++&rkcif_mipi_lvds_sditf {
++	status = "okay";
++
++	port {
++		mipi_lvds_sditf: endpoint {
++			remote-endpoint = <&isp_vir0>;
++		};
++	};
++};
++
++&rkcif_mipi_lvds1_sditf {
++	status = "okay";
++
++	port {
++		mipi_lvds1_sditf: endpoint {
++			remote-endpoint = <&isp_vir1>;
++		};
++	};
++};
++
++/*-----------------------------------------------------------------------*/
++
++&rkisp_vir0 {
++	status = "okay";
++
++	port {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		isp_vir0: endpoint@0 {
++			reg = <0>;
++			remote-endpoint = <&mipi_lvds_sditf>;
++		};
++	};
++};
++
++&rkisp_vir1 {
++	status = "okay";
++
++	port {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		isp_vir1: endpoint@0 {
++			reg = <0>;
++			remote-endpoint = <&mipi_lvds1_sditf>;
++		};
++	};
++};
++
++/*-----------------------------------------------------------------------*/
++
++&rkcif {
++	status = "okay";
++};
++
++&rkcif_mmu {
++	status = "okay";
++};
++
++&rkisp {
++	status = "okay";
++};
++
++&rkisp_mmu {
++	status = "okay";
++};
++
++&rkvpss {
++	status = "okay";
++};
++
++&rkvpss_mmu {
++	status = "okay";
++};
++
++
++// &rkisp_vir0_sditf {
++// 	status = "okay";
++// };
++
++// &rkvpss_vir0 {
++// 	status = "okay";
++// };
++
++// &rkisp_vir1_sditf {
++//     status = "okay";
++// };
++
++// &rkvpss_vir1 {
++//     status = "okay";
++// };
++/*-----------------------------------------------------------------------*/
 diff --git a/arch/arm64/boot/dts/rockchip/rk3576-recomputer-rk3576-devkit.dts b/arch/arm64/boot/dts/rockchip/rk3576-recomputer-rk3576-devkit.dts
 new file mode 100644
-index 000000000000..6043618548bc
+index 000000000000..1cd095334ba0
 --- /dev/null
 +++ b/arch/arm64/boot/dts/rockchip/rk3576-recomputer-rk3576-devkit.dts
-@@ -0,0 +1,1182 @@
+@@ -0,0 +1,1201 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2024 Rockchip Electronics Co., Ltd.
@@ -1001,7 +1096,7 @@ index 000000000000..6043618548bc
 +#include "rk3576.dtsi"
 +#include "rk3576-linux.dtsi"
 +#include "rk3576-rk806.dtsi"
-+
++#include "recomputer-rk3576-devkit-cam.dtsi"
 +/ {
 +	model = "Seeed Studio ReComputer RK3576 Dev Kit";
 +	compatible = "seeed,recomputer rk3576 devkit", "rockchip,rk3576";
@@ -1012,18 +1107,22 @@ index 000000000000..6043618548bc
 +		status = "okay";
 +		compatible = "pwm-fan";
 +		#cooling-cells = <2>;
-+		cooling-levels = <0 50 100 150 200 255>;  
++		cooling-levels = <0 50 100 150 200 255>;
 +		fan-supply = <&vcc_sys>;
 +		pwms = <&pwm0_2ch_0 0 60000 0>;
++
++		interrupt-parent = <&gpio3>;
++		interrupts = <RK_PC5 IRQ_TYPE_EDGE_BOTH>;
++		pulses-per-revolution = <2>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&fan_tach>;
 +
 +		rockchip,temp-trips = <
 +            20000    1
 +            25000    2
 +            30000    3
 +            35000    5
-+
 +        >;
-+
 +	};
 +
 +	vcc_sys: vcc5v0-sys {
@@ -1223,14 +1322,15 @@ index 000000000000..6043618548bc
 +		rockchip,mclk-fs = <256>;
 +		rockchip,cpu = <&sai1>;
 +		rockchip,codec = <&es8311>;
-+		rockchip,audio-routing =
-+			/* Playback path */
-+			"Headphone", "DIFFERENTIAL OUT",
-+			// "Speaker",   "DIFFERENTIAL OUT",
-+			/* Capture path */
-+			"AMIC", "Main Mic";
++        rockchip,audio-routing =
++            /* Playback path - Headphone from differential output */
++            "Headphone", "DIFFERENTIAL OUT",
++            /* Capture path - Analog microphone */
++            "AMIC", "Main Mic",
++            "AMIC", "Headset Mic";
 +		pinctrl-names = "default";
 +		pinctrl-0 = <&hp_det &hp_con>;
++
 +	};
 +
 +	gpio-leds {
@@ -1508,6 +1608,8 @@ index 000000000000..6043618548bc
 +&hdmi {
 +	status = "okay";
 +	cec-enable;
++	ddc-i2c-scl-high-time-ns = <4812>;
++	ddc-i2c-scl-low-time-ns = <5000>;
 +};
 +
 +
@@ -1569,13 +1671,18 @@ index 000000000000..6043618548bc
 +	snps,reset-delays-us = <0 20000 100000>;
 +
 +	pinctrl-names = "default";
++	// pinctrl-0 = <&eth0m0_miim
++	// 	     &eth0m0_tx_bus2
++	// 	     &eth0m0_rx_bus2
++	// 	     &eth0m0_rgmii_clk
++	// 	     &eth0m0_rgmii_bus
++	// 	     &ethm0_clk0_25m_out>;
++
 +	pinctrl-0 = <&eth0m0_miim
 +		     &eth0m0_tx_bus2
 +		     &eth0m0_rx_bus2
 +		     &eth0m0_rgmii_clk
-+		     &eth0m0_rgmii_bus
-+		     &ethm0_clk0_25m_out>;
-+
++		     &eth0m0_rgmii_bus>;
 +	tx_delay = <0x20>;
 +	/* rx_delay = <0x3f>; */
 +
@@ -1587,6 +1694,7 @@ index 000000000000..6043618548bc
 +	/* Use rgmii-rxid mode to disable rx delay inside Soc */
 +	phy-mode = "rgmii-rxid";
 +	clock_in_out = "output";
++	
 +
 +	snps,reset-gpio = <&gpio2 RK_PB4 GPIO_ACTIVE_LOW>;
 +	snps,reset-active-low;
@@ -1610,6 +1718,7 @@ index 000000000000..6043618548bc
 +&mdio0 {
 +	rgmii_phy0: phy@1 {
 +		compatible = "ethernet-phy-ieee802.3-c22";
++		realtek,clkout-disable;
 +		reg = <0x0>;
 +	};
 +};
@@ -1617,19 +1726,21 @@ index 000000000000..6043618548bc
 +&mdio1 {
 +	rgmii_phy1: phy@1 {
 +		compatible = "ethernet-phy-ieee802.3-c22";
++		realtek,clkout-disable;
 +		reg = <0x0>;
 +	};
 +};
 +
 +&sai1 {
 +	status = "okay";
++	rockchip,sai-rx-route = <0 1 2 3>;
++ 	rockchip,sai-tx-route = <2 1 0 3>;
 +	pinctrl-names = "default";
 +	pinctrl-0 = <&sai1m0_lrck
-+			&sai1m0_sclk
-+			&sai1m0_sdi0
-+			&sai1m0_sdo2>;
++		     &sai1m0_sclk
++		     &sai1m0_sdi0
++		     &sai1m0_sdo2>;
 +};
-+
 +
 +
 +&sai6 {
@@ -1721,12 +1832,12 @@ index 000000000000..6043618548bc
 +	};
 +
 +
-+	eeprom:	at24c256@57 {
-+		status = "okay";
-+		compatible = "atmel,24c256";
-+		reg = <0x57>;
-+		pagesize = <16>;
-+	};
++	// eeprom:	at24c256@57 {
++	// 	status = "okay";
++	// 	compatible = "atmel,24c256";
++	// 	reg = <0x57>;
++	// 	pagesize = <16>;
++	// };
 +
 +	pcf8563: pcf8563@51 {
 +		compatible = "nxp,pcf8563";
@@ -1756,9 +1867,6 @@ index 000000000000..6043618548bc
 +		assigned-clock-rates = <12288000>;
 +		pinctrl-names = "default";
 +		pinctrl-0 = <&sai1m0_mclk>;
-+
-+		// dai-format = "i2s";
-+        // dai-word-size = <16>;
 +	};
 +
 +	/* Typec Controller Fusb302 */
@@ -1830,14 +1938,14 @@ index 000000000000..6043618548bc
 +
 +};
 +
-+&gpio_xten {
-+	lte_reset_hog: lte-reset-hog {
-+		gpio-hog;
-+		gpios = <4 GPIO_ACTIVE_HIGH>;
-+		output-high;              
-+		line-name = "lte_reset";
-+	};
-+};
++// &gpio_xten {
++// 	lte_reset_hog: lte-reset-hog {
++// 		gpio-hog;
++// 		gpios = <4 GPIO_ACTIVE_HIGH>;
++// 		output-high;              
++// 		line-name = "lte_reset";
++// 	};
++// };
 +
 +
 +
@@ -2047,6 +2155,12 @@ index 000000000000..6043618548bc
 +		};
 +	};
 +
++	fan {
++		fan_tach: fan-tach {
++			rockchip,pins = <3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
++		};
++	};
++
 +};
 +
 +&gpio0 {
@@ -2164,6 +2278,67 @@ index 000000000000..6043618548bc
 +		"", "", "", "";
 +};
 +
+diff --git a/drivers/media/i2c/imx219.c b/drivers/media/i2c/imx219.c
+index a59f301c6533..d77d0ff9df96 100644
+--- a/drivers/media/i2c/imx219.c
++++ b/drivers/media/i2c/imx219.c
+@@ -79,10 +79,12 @@ static const struct imx219_reg imx219_init_tab_3280_2464_21fps[] = {
+ 	{0x0128, 0x00},		/* DPHY_CNTRL */
+ 	{0x012A, 0x18},		/* EXCK_FREQ[15:8] */
+ 	{0x012B, 0x00},		/* EXCK_FREQ[7:0] */
+-	{0x015A, 0x01},		/* INTEG TIME[15:8] */
+-	{0x015B, 0xF4},		/* INTEG TIME[7:0] */
+-	{0x0160, 0x09},		/* FRM_LENGTH_A[15:8] */
+-	{0x0161, 0xC4},		/* FRM_LENGTH_A[7:0] */
++	/* 0x015A-0x015B: Controlled by V4L2_CID_EXPOSURE in imx219_s_ctrl */
++	// {0x015A, 0x01},		/* INTEG TIME[15:8] */
++	// {0x015B, 0xF4},		/* INTEG TIME[7:0] */
++	/* 0x0160-0x0161: Controlled by V4L2_CID_VBLANK in imx219_s_ctrl */
++	// {0x0160, 0x09},		/* FRM_LENGTH_A[15:8] */
++	// {0x0161, 0xC4},		/* FRM_LENGTH_A[7:0] */
+ 	{0x0162, 0x0D},		/* LINE_LENGTH_A[15:8] */
+ 	{0x0163, 0x78},		/* LINE_LENGTH_A[7:0] */
+ 	{0x0260, 0x09},		/* FRM_LENGTH_B[15:8] */
+@@ -131,8 +133,9 @@ static const struct imx219_reg imx219_init_tab_1920_1080_30fps[] = {
+ 	{0x0128, 0x00},
+ 	{0x012A, 0x18},
+ 	{0x012B, 0x00},
+-	{0x0160, 0x06},
+-	{0x0161, 0xE6},
++	/* 0x0160-0x0161: Controlled by V4L2_CID_VBLANK in imx219_s_ctrl */
++	// {0x0160, 0x06},
++	// {0x0161, 0xE6},
+ 	{0x0162, 0x0D},
+ 	{0x0163, 0x78},
+ 	{0x0164, 0x02},
+@@ -291,6 +294,10 @@ static int reg_write(struct i2c_client *client, const u16 addr, const u8 data)
+ 	tx[0] = addr >> 8;
+ 	tx[1] = addr & 0xff;
+ 	tx[2] = data;
++
++	dev_info(&client->dev, "reg_write: addr=0x%04x, val=0x%02x, caller %pS\n",
++		 addr, data, __builtin_return_address(0));
++
+ 	ret = i2c_transfer(adap, &msg, 1);
+ 	mdelay(2);
+ 
+@@ -331,6 +338,7 @@ static int reg_write_table(struct i2c_client *client,
+ 	const struct imx219_reg *reg;
+ 	int ret;
+ 
++	
+ 	for (reg = table; reg->addr != IMX219_TABLE_END; reg++) {
+ 		ret = reg_write(client, reg->addr, reg->val);
+ 		if (ret < 0)
+@@ -538,6 +546,8 @@ static int imx219_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	u16 a_gain = 256;
+ 	u16 d_gain = 1;
+ 
++	printk("imx219_s_ctrl id=0x%x val=0x%x\n", ctrl->id, ctrl->val);
++
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_HFLIP:
+ 		priv->hflip = ctrl->val;
 diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
 index f990f8e172aa..bf6fc596d8dd 100644
 --- a/drivers/usb/typec/tcpm/fusb302.c
