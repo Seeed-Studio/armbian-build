@@ -18,6 +18,17 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	[[ -z $AIC8800_TYPE ]] && return 0
 	api_url="https://api.github.com/repos/radxa-pkg/aic8800/releases/latest"
 	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
+	# Fallback to gh CLI when GitHub API is rate-limited
+	if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
+		if command -v gh &>/dev/null; then
+			display_alert "GitHub API rate-limited, using gh CLI fallback" "aic8800" "warn"
+			latest_version=$(gh release view --repo radxa-pkg/aic8800 --json tagName --jq '.tagName')
+		fi
+	fi
+	if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
+		display_alert "Cannot determine aic8800 latest version, skipping" "aic8800" "warn"
+		return 0
+	fi
 	aic8800_firmware_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-firmware_${latest_version}_all.deb"
 	aic8800_pcie_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-pcie-dkms_${latest_version}_all.deb"
 	aic8800_sdio_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-sdio-dkms_${latest_version}_all.deb"
