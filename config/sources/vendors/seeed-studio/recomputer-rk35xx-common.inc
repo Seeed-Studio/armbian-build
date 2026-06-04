@@ -510,3 +510,38 @@ function post_family_tweaks__recomputer_rk35xx_disable_armbian_hardware_optimize
 	chroot_sdcard systemctl --no-reload disable armbian-hardware-optimize.service 2>/dev/null || true
 	rm -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service
 }
+
+# Create armbianEnv.txt.bak at build time and install a systemd service to
+# keep the backup in sync after firstrun MAC randomization.
+# Protects against sed -i + power loss corruption on first boot.
+function pre_umount_final_image__recomputer_armbianenv_backup() {
+	display_alert "$BOARD" "Creating armbianEnv.txt backup" "info"
+
+	local env_file="${MOUNT}/boot/armbianEnv.txt"
+	local bak_file="${MOUNT}/boot/armbianEnv.txt.bak"
+
+	if [[ -f "${env_file}" ]]; then
+		cp -a "${env_file}" "${bak_file}"
+		display_alert "$BOARD" "armbianEnv.txt.bak created"
+	fi
+
+	# Sync backup after firstrun writes MAC addresses.
+	# Runs every boot (cheap cp, keeps backup current if user edits armbianEnv.txt).
+	cat > "${MOUNT}/etc/systemd/system/armbian-env-backup-sync.service" <<- 'EOF'
+[Unit]
+Description=Sync armbianEnv.txt backup
+After=armbian-firstrun.service
+ConditionPathExists=/boot/armbianEnv.txt
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/cp -a /boot/armbianEnv.txt /boot/armbianEnv.txt.bak
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+	mkdir -p "${MOUNT}/etc/systemd/system/multi-user.target.wants"
+	ln -sf ../armbian-env-backup-sync.service "${MOUNT}/etc/systemd/system/multi-user.target.wants/armbian-env-backup-sync.service"
+}
