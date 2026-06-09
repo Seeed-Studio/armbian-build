@@ -22,30 +22,25 @@ test -n "${distro_bootpart}" || distro_bootpart=1
 echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
 # Load armbianEnv.txt with corruption detection and .bak fallback.
-# sed -i + power loss can zero or truncate the file.
-setenv armbian_env_loaded "no"
+# Power loss can fill the file with 0xFF (eMMC erased block) which passes
+# "env import -t" without error but imports zero variables. Clear rootdev
+# before import, then verify it was actually set.
+setenv rootdev
 if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt; then
-	if env import -t ${load_addr} ${filesize}; then
-		setenv armbian_env_loaded "yes"
-	else
-		echo "WARNING: armbianEnv.txt format error"
-	fi
+	env import -t ${load_addr} ${filesize}
 fi
-if test "${armbian_env_loaded}" = "no"; then
+if test -z "${rootdev}"; then
 	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.bak; then
 		echo "Loading armbianEnv.txt.bak as fallback"
-		if env import -t ${load_addr} ${filesize}; then
-			setenv armbian_env_loaded "yes"
-		else
-			echo "ERROR: armbianEnv.txt.bak format error"
-		fi
-	else
-		echo "WARNING: no armbianEnv.txt.bak found"
+		env import -t ${load_addr} ${filesize}
 	fi
 fi
-# Final safety: restore default rootdev if all sources failed
 if test -z "${rootdev}"; then
-	setenv rootdev "/dev/mmcblk0p1"
+	if part exists mmc 1 1; then
+		setenv rootdev "/dev/mmcblk1p1"
+	elif part exists mmc 0 1; then
+		setenv rootdev "/dev/mmcblk0p1"
+	fi
 fi
 
 # fdtfile is set by armbianEnv.txt (per-board BOOT_FDT_FILE).
