@@ -1,0 +1,225 @@
+# Seeed Studio Rockchip RK3572 quad core 2.2GHz SoC; boot chain built from Rockchip v2025.04 vendor u-boot
+BOARD_NAME="reComputer Zero RK3572"
+BOARDFAMILY="rk35xx"
+BOARD_MAINTAINER="Pillar1989"
+BOARD_VENDOR="seeed-studio"
+INTRODUCED="2026"
+BOOTCONFIG="rk3572_defconfig" # Rockchip v2025.04 vendor u-boot (same commit as official RK3572 SDK)
+BOOT_SOC="rk3572"
+KERNEL_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="rockchip/rk3572-evb1-v10-linux.dtb" # full-featured EVB variant (HDMI+dual camera+2nd PCIe), same as SDK Debian; DSI panel also okay
+SERIALCON="ttyFIQ0"
+CPUMIN="408000"
+CPUMAX="2208000"
+IMAGE_PARTITION_TABLE="gpt"
+EXTRAWIFI="no" # 6.12 BSP tree carries its own wireless drivers; extra-wifi patches would fail
+
+function post_family_config__recomputer_zero_rk3572_vendor612() {
+	[[ "${BRANCH}" == "vendor" ]] || return 0
+	display_alert "${BOARD}" "vendor kernel 6.12 from rockchip-linux; vendor u-boot 2025.04 from rockchip-linux" "info"
+	declare -g KERNELSOURCE='https://github.com/rockchip-linux/kernel.git'
+	declare -g KERNELBRANCH='commit:470f9dccbdc42e7b8a824d0a5c5640a10e9457d2' # = develop-6.12 tip; pinned for offline/reproducible builds
+	declare -g KERNEL_MAJOR_MINOR="6.12"
+	declare -g KERNELPATCHDIR='rk3572-vendor-6.12'
+	declare -g LINUXCONFIG='linux-rk3572-vendor'
+	declare -g -i KERNEL_GIT_CACHE_TTL=120
+	# RK3572 console is fiq-debugger on UART0 (ttyFIQ0@1500000, per rk3572-linux.dtsi);
+	# boot-rk3572.cmd is derived from boot-rk3576.cmd (same load_addr 0x48000000) with that console
+	declare -g BOOTSCRIPT='boot-rk3572.cmd:boot.cmd'
+
+	# U-Boot: Rockchip v2025.04 vendor fork, commit identical to the official RK3572 SDK
+	# (linux-6.12-stan-rkr1). Not on any branch of the public mirror, but fetchable by SHA.
+	declare -g BOOTSOURCE='https://github.com/rockchip-linux/u-boot.git'
+	declare -g BOOTBRANCH='commit:5b6584f18fc2430cecedbd6890b44be3d63c6879'
+	declare -g BOOTDIR='u-boot-rk3572'
+	declare -g BOOTPATCHDIR="" # radxa patches do not apply to the rockchip 2025.04 tree; no patches needed
+	# Reuse the spl-blobs scenario (satisfies its DDR_BLOB sanity checks); actual packing is
+	# taken over by board_uboot_spl_blobs_postprocess below (rockchip make.sh flow).
+	declare -g BOOT_SCENARIO='spl-blobs'
+	declare -g DDR_BLOB='bin/rk35/rk3572_ddr_lp4_2112MHz_lp5_2736MHz_v1.07.bin' # rockchip-linux/rkbin layout
+	declare -g BL31_BLOB='bin/rk35/rk3572_bl31_v1.10.elf'
+	declare -g UBOOT_TARGET_MAP=';;idbloader.img uboot.img' # plain make builds u-boot + SPL; outputs packed in postprocess
+	# rk3572 blobs (dboot/ddr/rboot/bl31/bl32, RK3572MINIALL/TRUST.ini) only exist in the upstream rkbin
+	declare -g RKBIN_GIT_URL='https://github.com/rockchip-linux/rkbin'
+
+	# Defined inside the hook so it overrides the family's default write_uboot_platform
+	# (a top-level definition here gets clobbered when the family file is sourced later;
+	# the family default would pick the only-blobs branch and look for idbloader.bin).
+	function write_uboot_platform() {
+		dd if=$1/idbloader.img of=$2 bs=512 seek=64 conv=notrunc status=none # idblock @ sector 0x40
+		dd if=$1/uboot.img of=$2 bs=512 seek=16384 conv=notrunc status=none # uboot FIT @ sector 0x4000
+	}
+}
+
+# Official SDK builds u-boot with CONFIG_ROCKCHIP_FIT_IMAGE_PACK=y, and the FIT packing
+# runs via rockchip's make.sh/fit.sh against rkbin inis — not hooked into the u-boot
+# Makefile at all. Enable the option and provide ../rkbin before `make`.
+function post_config_uboot_target__recomputer_zero_rk3572_fit_pack() {
+	run_host_command_logged scripts/config --enable ROCKCHIP_FIT_IMAGE_PACK
+	run_host_command_logged ln -sfn "${RKBIN_DIR}" "../rkbin" # the in-make packing hooks expect ../rkbin
+}
+
+# RK3572 boot chain, replicating the official SDK flow (RK_UBOOT_SPL=y):
+#   uboot.img     = FIT(u-boot + BL31 + BL32), packed from rkbin RKTRUST/RK3572TRUST.ini
+#   <chip>_loader = idblock, packed from rkbin RKBOOT/RK3572MINIALL.ini with our built SPL
+function board_uboot_spl_blobs_postprocess() {
+	# fit.sh calls back into make.sh (pack-only); its select_toolchain() reads the .cc
+	# file for the toolchain prefix when no CROSS_COMPILE= argv is given — without it
+	# it falls back to /opt/prebuilts paths that don't exist in the Armbian container.
+	printf '%s' "${UBOOT_COMPILER}" >.cc
+	# ini paths MUST be absolute (make.sh --spl cds into rkbin before reading them) and
+	# --spl-new selects our built SPL over the rkbin prebuilt one.
+	run_host_command_logged ./scripts/fit.sh --ini-trust "${RKBIN_DIR}/RKTRUST/RK3572TRUST.ini" --ini-loader "${RKBIN_DIR}/RKBOOT/RK3572MINIALL.ini" --chip rk3572 --spl-new
+	run_host_command_logged cp -v rk3572_loader_*.bin idbloader.img
+}
+
+# Inject all vendor files (WiFi firmware, GPU libmali, camera IQ, gst plugins) into the
+# rootfs DURING the build (chroot stage) — not post-image via fragile rw loop mounts.
+# ${SDCARD} is the rootfs mount point provided by the framework.
+function post_family_tweaks__recomputer_zero_rk3572_vendor_stack() {
+	declare vendor="${SRC}/config/sources/vendors/seeed-studio/files"
+	declare libdir="${SDCARD}/usr/lib/aarch64-linux-gnu"
+	display_alert "${BOARD}" "injecting vendor stack (WiFi/GPU/camera)" "info"
+
+	# --- WiFi: AP6275P firmware + module autoload ---
+	mkdir -p "${SDCARD}/lib/firmware" "${SDCARD}/etc/modules-load.d"
+	cp -v "${vendor}/rk3572-wifi-ap6275p/"* "${SDCARD}/lib/firmware/"
+	echo bcmdhd > "${SDCARD}/etc/modules-load.d/bcmdhd.conf"
+
+	# --- GPU: libmali G310 blob + wrapper dir + ld.so.conf (matches official Debian) ---
+	declare gc="${vendor}/rk3572-gpu-camera"
+	mkdir -p "${libdir}/mali" "${SDCARD}/etc/ld.so.conf.d"
+	cp -v "${gc}/lib/libmali.so.1.10.0" "${libdir}/"
+	ln -sf libmali.so.1.10.0 "${libdir}/libmali.so.1"
+	ln -sf libmali.so.1 "${libdir}/libmali.so"
+	ln -sf libmali.so.1 "${libdir}/libmali-valhall-g310-g29p1.so"
+	cp -a "${gc}/mali/"* "${libdir}/mali/"
+	cp -v "${gc}/00-aarch64-mali.conf" "${SDCARD}/etc/ld.so.conf.d/"
+	# mpp + rga + rkaiq libraries
+	cp -v "${gc}/lib/librockchip_mpp.so"* "${gc}/lib/librga.so"* "${gc}/lib/librkaiq.so" "${libdir}/"
+
+	# --- gst rockchip plugins ---
+	mkdir -p "${libdir}/gstreamer-1.0"
+	cp -v "${gc}/gst/"*.so "${libdir}/gstreamer-1.0/"
+
+	# --- camera IQ calibration files ---
+	mkdir -p "${SDCARD}/etc/iqfiles"
+	cp -v "${gc}/iqfiles/"*.json "${SDCARD}/etc/iqfiles/"
+
+	# --- GPU: dma_heap accessible to video group ---
+	mkdir -p "${SDCARD}/etc/udev/rules.d"
+	echo 'KERNEL=="dma_heap/*", GROUP="video", MODE="0660"' > "${SDCARD}/etc/udev/rules.d/99-mali-dma-heap.rules"
+
+	# --- camera: rkaiq via proper deb package (from seeed_armbian_extension prebuilt/) ---
+	declare rkaiq_deb="${SRC}/config/sources/vendors/seeed-studio/files/debs/camera-engine-rkaiq-rk3572_1.0-1_arm64.deb"
+	if [[ -f "${rkaiq_deb}" ]]; then
+		display_alert "${BOARD}" "installing camera-engine-rkaiq-rk3572 deb" "info"
+		cp -v "${rkaiq_deb}" "${SDCARD}/tmp/"
+		chroot "${SDCARD}" /usr/bin/dpkg -i "/tmp/camera-engine-rkaiq-rk3572_1.0-1_arm64.deb"
+		rm -f "${SDCARD}/tmp/camera-engine-rkaiq-rk3572_1.0-1_arm64.deb"
+	else
+		# fallback: raw copy from vendor files (prebuilt binary, no deb management)
+		display_alert "${BOARD}" "rkaiq deb not found, using raw copy" "wrn"
+		install -m 755 "${gc}/bin/rkaiq_3A_server" "${SDCARD}/usr/bin/"
+		mkdir -p "${SDCARD}/etc/iqfiles" "${SDCARD}/lib/systemd/system"
+		cp -v "${gc}/iqfiles/"*.json "${SDCARD}/etc/iqfiles/"
+		cp -v "${gc}/rkaiq_3A.service" "${SDCARD}/lib/systemd/system/" 2>/dev/null || true
+		chroot "${SDCARD}" /usr/bin/systemctl enable rkaiq_3A.service 2>/dev/null || true
+	fi
+}
+
+# After the final image is built, produce the UFS partition-wise flash bundle:
+#   rk3572-flash-bundle/{loader.bin, uboot.img, boot.img(FIT), rootfs.img, parameter.txt, flash.sh}
+# READ-ONLY on the final image (kernel/dtb extracted ro; rootfs dd'd ro; all vendor files
+# were already injected by post_family_tweaks during the rootfs build).
+function post_build_image__recomputer_zero_rk3572_flash_bundle() {
+	declare bundle="${SRC}/output/images/rk3572-flash-bundle"
+	declare tmp="${SRC}/.tmp/rk3572-bundle"
+	declare uboot_wt="${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH#commit:}"
+	rm -rf "${tmp}" && mkdir -p "${bundle}" "${tmp}/mnt" "${uboot_wt}/images" "${uboot_wt}/fit"
+	display_alert "${BOARD}" "generating UFS flash bundle (read-only)" "info"
+
+	# read-only mount: extract kernel + dtb (all vendor files already in rootfs from post_family_tweaks)
+	mount -o loop,ro,offset=$((32768 * 512)) "${FINAL_IMAGE_FILE}" "${tmp}/mnt" || exit_with_error "bundle: ro mount failed"
+	cp -L "${tmp}/mnt/boot/Image" "${tmp}/kernel"
+	cp -L "${tmp}/mnt/boot/dtb/${BOOT_FDT_FILE}" "${tmp}/dtb"
+	umount "${tmp}/mnt"
+
+	# bake the kernel cmdline into the dtb: FIT boot ignores boot.scr/armbianEnv
+	fdtput -t s "${tmp}/dtb" /chosen bootargs "console=${SERIALCON},1500000 root=/dev/sda8 rootwait rootfstype=ext4"
+
+	# FIT boot.img via rockchip's own recipe (empty ramdisk/second are proven fine)
+	cp "${tmp}/kernel" "${uboot_wt}/images/kernel"
+	cp "${tmp}/dtb" "${uboot_wt}/images/dtb"
+	: > "${uboot_wt}/images/ramdisk"; : > "${uboot_wt}/images/second"
+	( cd "${uboot_wt}" && export srctree=. && bash arch/arm/mach-rockchip/make_fit_boot.sh -c none > boot.its && ./tools/mkimage -f boot.its -E -p 0x1200 fit/boot.itb -v 0 ) || exit_with_error "bundle: FIT pack failed"
+	cp "${uboot_wt}/fit/boot.itb" "${bundle}/boot.img"
+
+	# loader + uboot.img out of the freshly built u-boot deb
+	declare uboot_deb uboot_dir
+	uboot_deb="$(ls -t "${SRC}/output/debs/linux-u-boot-${BOARD}-vendor"*.deb 2>/dev/null | head -1)"
+	[[ -n "${uboot_deb}" ]] || exit_with_error "bundle: u-boot deb not found"
+	uboot_dir="$(dpkg-deb -x "${uboot_deb}" "${tmp}/uboot" && find "${tmp}/uboot/usr/lib" -maxdepth 1 -type d -name 'linux-u-boot-*' | head -1)"
+	cp "${uboot_dir}/idbloader.img" "${bundle}/loader.bin"
+	cp "${uboot_dir}/uboot.img" "${bundle}/uboot.img"
+
+	# rootfs partition image: read-only dd from the (never-modified) final image
+	declare -i total rootfs_sectors
+	total=$(($(stat -c %s "${FINAL_IMAGE_FILE}") / 512))
+	rootfs_sectors=$((total - 32768))
+	dd if="${FINAL_IMAGE_FILE}" of="${bundle}/rootfs.img" bs=512 skip=32768 count="${rootfs_sectors}" status=none
+
+	# slim parameter (SDK 8-partition layout, middle ones shrunk; userdata=rootfs target at 0x30000)
+	cat > "${bundle}/parameter.txt" <<'PARAM'
+FIRMWARE_VER: 1.0
+MACHINE_MODEL: recomputer-zero-rk3572
+MACHINE_ID: 007
+MANUFACTURER: Seeed
+MAGIC: 0x5041524B
+ATAG: 0x00200800
+MACHINE: 0xffffffff
+CHECK_MASK: 0x80
+PWR_HLD: 0,0,A,0,1
+TYPE: GPT
+GROW_ALIGN: 0
+CMDLINE: mtdparts=:0x00004000@0x00004000(uboot),0x00002000@0x00008000(misc),0x00020000@0x0000a000(boot),0x00002000@0x0002a000(recovery),0x00001000@0x0002c000(backup),0x00002000@0x0002d000(rootfs),0x00001000@0x0002f000(oem),-@0x00030000(userdata:grow)
+uuid:rootfs=614e0000-0000-4b53-8000-1d28000054a9
+uuid:boot=7A3F0000-0000-446A-8000-702F00006273
+PARAM
+
+	# one-shot flash script; ul MUST be last (it reboots the board)
+	cat > "${bundle}/flash.sh" <<'FLASH'
+#!/bin/bash
+# RK3572 UFS flash: maskrom mode required. Usage: ./flash.sh [/path/to/upgrade_tool]
+set -e
+cd "$(dirname "$0")"
+UT="${1:-/media/mkirin/Data/Works/RockChip_flash/upgrade_tool_v2.55_for_linux/upgrade_tool}"
+"$UT" ld || true
+"$UT" db  loader.bin
+"$UT" di -p parameter.txt
+"$UT" wl  0x4000 uboot.img
+"$UT" wl  0xa000 boot.img
+"$UT" wl  0x4000 uboot.img
+"$UT" wl  0xa000 boot.img
+# rootfs MUST be written in chunks: upgrade_tool wl silently drops data on large UFS writes
+CHUNK=204800  # 100MB in 512-byte sectors
+TOTAL=$(($(stat -c %s rootfs.img) / 512))
+WRITTEN=0
+while [ $WRITTEN -lt $TOTAL ]; do
+    REMAIN=$((TOTAL - WRITTEN)); [ $REMAIN -lt $CHUNK ] && CHUNK=$REMAIN
+    dd if=rootfs.img of=/tmp/.chunk bs=512 skip=$WRITTEN count=$CHUNK status=none
+    "$UT" wl $((0x30000 + WRITTEN)) /tmp/.chunk
+    WRITTEN=$((WRITTEN + CHUNK)); sleep 1
+done
+rm -f /tmp/.chunk
+"$UT" ul  loader.bin
+echo "=== flashed; board is rebooting ==="
+FLASH
+	chmod +x "${bundle}/flash.sh"
+
+	rm -rf "${tmp}"
+	ls -lh "${bundle}"
+	display_alert "${BOARD}" "flash bundle ready: ${bundle}" "info"
+}
