@@ -29,10 +29,12 @@ function post_family_config__recomputer_zero_rk3572_vendor612() {
 	# boot-rk3572.cmd is derived from boot-rk3576.cmd (same load_addr 0x48000000) with that console
 	declare -g BOOTSCRIPT='boot-rk3572.cmd:boot.cmd'
 
-	# U-Boot: Rockchip v2025.04 vendor fork, commit identical to the official RK3572 SDK
-	# (linux-6.12-stan-rkr1). Not on any branch of the public mirror, but fetchable by SHA.
+	# U-Boot: Rockchip v2025.04 vendor tree. The official RK3572 SDK
+	# (linux-6.12-stan-rkr1) pinned commit 5b6584f18fc is a direct ancestor
+	# of v5 (the only public v2025.04-generation branch); tracking v5 picks
+	# up active rk3572 fixes. Fallback pin if v5 regresses: 5b6584f18fc.
 	declare -g BOOTSOURCE='https://github.com/rockchip-linux/u-boot.git'
-	declare -g BOOTBRANCH='commit:5b6584f18fc2430cecedbd6890b44be3d63c6879'
+	declare -g BOOTBRANCH='branch:v5'
 	declare -g BOOTDIR='u-boot-rk3572'
 	declare -g BOOTPATCHDIR="" # radxa patches do not apply to the rockchip 2025.04 tree; no patches needed
 	# Reuse the spl-blobs scenario (satisfies its DDR_BLOB sanity checks); actual packing is
@@ -141,20 +143,85 @@ function post_build_image__recomputer_zero_rk3572_flash_bundle() {
 	rm -rf "${tmp}" && mkdir -p "${bundle}" "${tmp}/mnt" "${uboot_wt}/images" "${uboot_wt}/fit"
 	display_alert "${BOARD}" "generating UFS flash bundle (read-only)" "info"
 
-	# read-only mount: extract kernel + dtb (all vendor files already in rootfs from post_family_tweaks)
+	# read-only mount: extract kernel + dtb + initramfs (all vendor files already in
+	# rootfs from post_family_tweaks). The FIT MUST carry a real initramfs: since the
+	# v5 u-boot's CVE-2026-46728 handling, every hash node is verified and an empty
+	# ramdisk file makes boot_fit abort with "Ramdisk image is corrupt or invalid".
 	mount -o loop,ro,offset=$((32768 * 512)) "${FINAL_IMAGE_FILE}" "${tmp}/mnt" || exit_with_error "bundle: ro mount failed"
 	cp -L "${tmp}/mnt/boot/Image" "${tmp}/kernel"
 	cp -L "${tmp}/mnt/boot/dtb/${BOOT_FDT_FILE}" "${tmp}/dtb"
+	declare bundle_initrd
+	bundle_initrd="$(ls "${tmp}"/mnt/boot/initrd.img-* 2>/dev/null | head -1)"
+	[[ -n "${bundle_initrd}" ]] || exit_with_error "bundle: initrd.img not found in image /boot"
+	cp -L "${bundle_initrd}" "${tmp}/initrd"
 	umount "${tmp}/mnt"
 
 	# bake the kernel cmdline into the dtb: FIT boot ignores boot.scr/armbianEnv
 	fdtput -t s "${tmp}/dtb" /chosen bootargs "console=${SERIALCON},1500000 root=/dev/sda8 rootwait rootfstype=ext4"
 
-	# FIT boot.img via rockchip's own recipe (empty ramdisk/second are proven fine)
+	# FIT boot.img: kernel + initramfs + dtb, load addresses per make_fit_boot.sh
+	# conventions. The resource/logo node is omitted (was an empty file; an empty
+	# hash node is equally rejected by v5).
 	cp "${tmp}/kernel" "${uboot_wt}/images/kernel"
 	cp "${tmp}/dtb" "${uboot_wt}/images/dtb"
-	: > "${uboot_wt}/images/ramdisk"; : > "${uboot_wt}/images/second"
-	( cd "${uboot_wt}" && export srctree=. && bash arch/arm/mach-rockchip/make_fit_boot.sh -c none > boot.its && ./tools/mkimage -f boot.its -E -p 0x1200 fit/boot.itb -v 0 ) || exit_with_error "bundle: FIT pack failed"
+	cp "${tmp}/initrd" "${uboot_wt}/images/ramdisk"
+	cat > "${uboot_wt}/boot.its" <<'ITS'
+/dts-v1/;
+/ {
+	description = "FIT source file for Linux";
+	#address-cells = <1>;
+
+	images {
+		fdt {
+			data = /incbin/("./images/dtb");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			load  = <0xffffff00>;
+			hash {
+				algo = "sha256";
+			};
+		};
+
+		kernel {
+			data = /incbin/("./images/kernel");
+			compression = "none";
+			type = "kernel";
+			arch = "arm64";
+			os = "linux";
+			entry = <0xffffff01>;
+			load  = <0xffffff01>;
+			hash {
+				algo = "sha256";
+			};
+		};
+
+		ramdisk {
+			data = /incbin/("./images/ramdisk");
+			compression = "none";
+			type = "ramdisk";
+			arch = "arm64";
+			os = "linux";
+			load  = <0xffffff02>;
+			hash {
+				algo = "sha256";
+			};
+		};
+	};
+
+	configurations {
+		default = "conf";
+		conf {
+			description = "Boot Linux kernel with FDT blob";
+			rollback-index = <0x0>;
+			fdt = "fdt";
+			kernel = "kernel";
+			ramdisk = "ramdisk";
+		};
+	};
+};
+ITS
+	( cd "${uboot_wt}" && ./tools/mkimage -f boot.its -E -p 0x1200 fit/boot.itb -v 0 ) || exit_with_error "bundle: FIT pack failed"
 	cp "${uboot_wt}/fit/boot.itb" "${bundle}/boot.img"
 
 	# loader + uboot.img out of the freshly built u-boot deb
