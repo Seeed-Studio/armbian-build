@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<!--
+  Images download page — fully static shell.
+
+  ZERO substitutions: deploy-pages copies this file verbatim to
+  index.html and writes the page's whole data state into a sibling
+  data.json (assembled from the mirror's slots.json + the referenced
+  per-tag manifests + the GitHub release list). The page fetches it
+  same-origin at browse time — CORS blocks github.io → OneDrive /
+  github.com, so the mirror itself is unreachable from the browser;
+  one bundled file also keeps every CDN cache window internally
+  consistent (slots and manifests can never come from different
+  deploys). The inline JS deliberately uses no backtick template
+  literals — keep avoiding ${...} sequences.
+
+  data.json shape:
+    { repo,                         CFG.repo — GitHub release links
+      slots:  { "stable": tag?, "pre-release": tag?,
+                "history": [tag, ...] },          (0..N older stables)
+      manifests: { tag: { files: {relpath: url}, sizes: {relpath: bytes} } },
+      releases: [{tag_name, prerelease, published_at}, ...] }
+    where a relpath is "<board>/<sec>/<kind>/[ota/]<file>" — sec is
+    plain|secure, kind is recovery|ab|loaders. ONE namespace: the
+    storage tree, the manifest and the page's rendering hierarchy
+    (board → security group → {Loader, Recovery, A/B}) are the same
+    shape.
+
+  Data flow (all client-side at browse time):
+    * slot binding: SLOTS = data.json's slots — names the build each
+      slot holds; a slot without a tag stays hidden, so after promotion
+      the pre slot vanishes with no tag-ordering heuristic.
+    * RELEASES joins in per-tag metadata (publish date, GitHub link);
+      all download links come from the OneDrive manifests.
+    * LINKS is synthesized from slots + manifests (synthLinks below):
+      "<slot>/<board>/<sec>/<kind>/..." — one namespace; history tags
+      prefix "history/<tag>/". Boards are discovered from the keys.
+  Layout: collapsible slot bars (Stable expanded by default, one gray
+  History card per older stable), pill anchor nav under the title,
+  per-board cards (name above photo, an Armbian board-page button
+  below), downloads split into two security groups (green PLAIN / red
+  SECURE frames, corner labels) — each holding a Loader box first
+  (maskrom / SPI flash, teal/orange buttons) then the Recovery / A/B
+  image boxes; buttons grouped
+  [Image sha256] | [OTA checksum] | [Build info], equal-width pills.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Seeed reComputer — Armbian Image Downloads</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.65 -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+         background: #f3f5f8; color: #03353f; }
+  header { background: #03353f; color: #fff; padding: 34px 0 30px; }
+  main { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: .5px; }
+  h1 em { color: #8dc215; font-style: normal; }
+  /* anchor nav under the title: pill links color-matched to their slot
+     badges (green Stable / amber Pre-release / gray Previous) */
+  .slotnav { display: flex; gap: 12px; margin-top: 12px; font-size: 13px; }
+  .slotnav[hidden] { display: none; }
+  .slotnav a { display: inline-block; padding: 2px 14px; border-radius: 999px;
+               text-decoration: none; border: 1px solid; }
+  .slotnav a.latest { color: #8dc215; border-color: rgba(141,194,21,.55);
+                      background: rgba(141,194,21,.12); }
+  .slotnav a.pre { color: #ffbc44; border-color: rgba(255,188,68,.55);
+                   background: rgba(255,188,68,.12); }
+  .slotnav a.prev { color: #b9cdd4; border-color: rgba(185,205,212,.45);
+                    background: rgba(185,205,212,.08); }
+  .slotnav a:hover { filter: brightness(1.18); }
+  details.slot { scroll-margin-top: 12px; }
+  .tag { display: inline-block; background: rgba(141,194,21,.18); color: #8dc215;
+         border: 1px solid rgba(141,194,21,.55); border-radius: 6px; padding: 0 8px;
+         font: 12px/1.7 ui-monospace, "SF Mono", monospace; text-decoration: none; }
+  a.tag:hover { color: #03353f; border-color: #03353f; }
+  .board { display: flex; gap: 26px; background: #fff; border-radius: 14px;
+           padding: 24px; margin: 22px 0; box-shadow: 0 1px 4px rgba(3,53,63,.08); }
+  .photo { flex: 0 0 300px; }
+  .photo img { width: 100%; border-radius: 10px; background: #fff; mix-blend-mode: multiply; }
+  .photo.noimg { flex-basis: auto; max-width: 300px; }
+  .photo.noimg img { display: none; }
+  .caption { text-align: center; font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+  .caption span { color: #8dc215; }
+  .info { flex: 1; min-width: 0; }
+  /* OTA-mode boxes: Recovery (single partition) with the A/B box (dual
+     partition) below it, then their Secure counterparts. */
+  .modeboxes { display: flex; flex-direction: column; gap: 14px; }
+  /* border visible-but-subordinate (#c5d2da): the mode grouping must be
+     legible, yet still yield to the colored secgroup frames above it */
+  .modebox { border: 1px solid #c5d2da; border-radius: 10px; padding: 0 14px 6px; }
+  /* title band: tinted by the owning security group (very light green
+    for PLAIN, very light red for SECURE — far paler than the group's
+    own frame/label), bleeding to the box edges (negative margins vs
+    the box padding) and following its top corners; bottom rule
+    separates band from rows */
+  .modebox h3 { font-size: 13px; font-weight: 700; color: #03353f;
+                margin: 0 -14px 8px; padding: 8px 14px 7px;
+                background: rgba(3,53,63,.05);
+                border-bottom: 1px solid #c5d2da;
+                border-radius: 9px 9px 0 0; letter-spacing: .3px; }
+  .secgroup .modebox h3 { background: rgba(141,194,21,.10);
+                          border-bottom-color: rgba(141,194,21,.30); }
+  .secgroup.secure .modebox h3 { background: rgba(217,58,58,.07);
+                                 border-bottom-color: rgba(217,58,58,.25); }
+  .modebox h3 svg.chip { width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px;
+                         color: #0ea5b7; }
+  .boxsub { color: #9db0ba; font-weight: 400; font-size: 12px; }
+  .row { display: flex; flex-direction: column; gap: 7px; padding: 9px 0;
+         border-top: 1px solid #eef2f6; }
+  .row-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+  .row-title { font-weight: 700; font-size: 14px; color: #51707c; }
+  .row-title svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; }
+  .row-meta { color: #7b8fa0; font-size: 12.5px; }
+  .row-info { color: #2c6fbf; font-size: 12.5px; text-decoration: underline;
+              text-decoration-style: dotted; margin-left: 8px; }
+  .row-info:hover { color: #1a4d8f; }
+  .row-links { display: flex; flex-wrap: nowrap; gap: 0; align-items: center;
+               overflow-x: auto; padding-bottom: 2px; }
+  /* Size labels change the natural button widths. Reserve enough space for
+     the widest live Image/OTA row so both groups and the divider align. */
+  :root { --download-image-group-width: 218px;
+          --download-ota-group-width: 227px; }
+  /* Secure size text stays black, not the primary button's white. */
+  .file-size { font-size: 12px; font-weight: 400; white-space: nowrap; opacity: .9; }
+  .btn.primary .file-size { color: #fff; }
+  .btn.secure .file-size, .btn.secure-loader .file-size { color: #03353f; }
+  /* Keep each download row on one line; narrow screens scroll the row. */
+  .grp { display: inline-flex; align-items: center; flex: 0 0 auto; flex-wrap: nowrap; gap: 8px; }
+  .row-links:not(.loader-links) > .grp:first-child { flex-basis: var(--download-image-group-width); }
+  .row-links:not(.loader-links) > .grp:nth-child(2) { flex-basis: var(--download-ota-group-width); }
+  .grp + .grp { margin-left: 16px; padding-left: 18px; border-left: 1px solid #d7dee5; }
+  /* Loader types are independent rows, not an Image/OTA separator pair. */
+  .loader-links { flex-direction: column; align-items: flex-start; gap: 7px;
+                  overflow-x: visible; }
+  .loader-links .grp + .grp { margin-left: 0; padding-left: 0; border-left: none; }
+  .badge { font-size: 11px; border-radius: 4px; padding: 0 6px; margin-left: 6px;
+           vertical-align: 2px; }
+  .btn { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 13px;
+         text-decoration: none; color: #03353f; border: 1px solid #d7dee5; background: #fff;
+         min-width: 84px; text-align: center; }
+  .btn.primary { background: #8dc215; border-color: #8dc215; color: #fff; font-weight: 600; }
+  /* secure-profile artifacts: yellow instead of green */
+  .btn.secure { background: #ffbc44; border-color: #ffbc44; color: #03353f; font-weight: 600; }
+  /* production-loader buttons: teal (plain) / orange (secure) — a third
+     color tier so factory artifacts never read as OS images */
+  .btn.loader { background: #0ea5b7; border-color: #0ea5b7; color: #fff; font-weight: 600; }
+  .btn.secure-loader { background: #ff8c42; border-color: #ff8c42; color: #03353f; font-weight: 600; }
+  .btn:hover { filter: brightness(.96); }
+  .loading { color: #7b8fa0; padding: 30px 0; }
+
+  /* ── slot (<details>) blocks: previous / pre-release ── */
+  details.slot { background: #fff; border-radius: 14px; margin: 22px 0;
+                 box-shadow: 0 1px 4px rgba(3,53,63,.08); overflow: hidden; }
+  details.slot > summary { display: flex; align-items: center; gap: 12px;
+                           padding: 15px 24px; cursor: pointer; list-style: none;
+                           user-select: none; font-size: 14px; }
+  details.slot > summary::-webkit-details-marker { display: none; }
+  details.slot > summary:hover { background: #fafbfd; }
+  details.slot[open] > summary { border-bottom: 1px solid #eef2f6; }
+  .badge.slotlatest { background: rgba(141,194,21,.15); color: #5a7d0a;
+                      border: 1px solid rgba(141,194,21,.55); font-size: 12px;
+                      border-radius: 6px; padding: 1px 9px; vertical-align: 0; }
+  .badge.slotpre { background: rgba(255,188,68,.18); color: #b96e00;
+                   border: 1px solid rgba(255,188,68,.6); font-size: 12px;
+                   border-radius: 6px; padding: 1px 9px; vertical-align: 0; }
+  .badge.slotprev { background: rgba(3,53,63,.06); color: #51707c;
+                    border: 1px solid rgba(3,53,63,.22); font-size: 12px;
+                    border-radius: 6px; padding: 1px 9px; vertical-align: 0; }
+  /* Lucide-style inline SVG icons inside badges */
+  .badge svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
+  .slotdate { color: #7b8fa0; font-size: 13px; }
+  .chev { margin-left: auto; color: #7b8fa0; transition: transform .15s; }
+  details.slot[open] .chev { transform: rotate(90deg); }
+  .slot-body { padding: 2px 24px 10px; }
+  .slot-body .board { margin: 16px 0 8px; }
+  .slot-note { color: #7b8fa0; font-size: 13px; padding: 12px 2px 0; }
+
+  /* ── security groups: green PLAIN / red SECURE frames, solid inverted
+     corner labels — these replace the old per-box Secure badge ── */
+  .secgroup { border: 1px solid rgba(141,194,21,.45); border-radius: 12px;
+              padding: 14px 12px 14px; position: relative;
+              background: rgba(141,194,21,.03); }
+  .secgroup + .secgroup { margin-top: 18px; }
+  .secgroup .modeboxes { gap: 10px; }
+  .secgroup .glabel { position: absolute; top: -9px; left: 12px; font-size: 11px;
+                      font-weight: 600; letter-spacing: 1px; padding: 0 8px;
+                      border-radius: 4px; background: #8dc215; color: #fff;
+                      border: 1px solid #8dc215; }
+  .secgroup.secure { border-color: rgba(217,58,58,.35);
+                     background: rgba(217,58,58,.025); }
+  .secgroup.secure .glabel { background: #c0392b; border-color: #c0392b; }
+
+  /* photo column: Armbian board-page button — info-link tier (white bg,
+     armbian-orange trim); logo is an embedded data-URI, never hotlinked */
+  .photo-link { text-align: center; margin-top: 14px; }
+  .photo-link a { display: inline-flex; align-items: center; gap: 7px; }
+  .photo-link .btn { background: #fff; border-color: #f26626; color: #f26626; font-weight: 600; }
+  .photo-link .btn img { width: 16px; height: 16px; }
+
+  @media (max-width: 720px) { .board { flex-direction: column; } .photo { flex: none; } }
+</style>
+</head>
+<body>
+<header><main>
+  <h1>Seeed <em>reComputer</em> — Armbian Images</h1>
+  <nav id="slotnav" class="slotnav" hidden></nav>
+</main></header>
+<main>
+  <div id="boards" class="loading">Loading…</div>
+  <div id="slots"></div>
+</main>
+
+<script>
+"use strict";
+
+// ── Runtime data ──────────────────────────────────────────────────
+let CFG = Object.freeze({ repo: "" });
+let LINKS = {};
+let RELEASES = [];
+let SLOTS = {};
+let SIZES = {};
+
+async function loadData() {
+  // {cache: no-cache} — revalidate past the CDN's ~10-min edge window
+  // where possible; the single-file bundle keeps any window consistent.
+  const r = await fetch("data.json", { cache: "no-cache" });
+  if (!r.ok) throw new Error("data.json HTTP " + r.status);
+  const d = await r.json();
+  CFG = Object.freeze({ repo: String(d.repo || "") });
+  SLOTS = (d.slots && typeof d.slots === "object") ? d.slots : {};
+  RELEASES = Array.isArray(d.releases) ? d.releases : [];
+  const manifests = (d.manifests && typeof d.manifests === "object") ? d.manifests : {};
+  LINKS = synthLinks(SLOTS, manifests, "files");
+  SIZES = synthLinks(SLOTS, manifests, "sizes");
+}
+
+// slots + manifests → flat path→value maps for download links and sizes.
+function synthLinks(slots, manifests, field) {
+  const links = {};
+  const emit = (prefix, m) => {
+    const files = m[field] || {};
+    for (const k in files) links[prefix + "/" + k] = files[k];
+  };
+  for (const slot of ["pre-release", "stable"])
+    if (slots[slot] && manifests[slots[slot]]) emit(slot, manifests[slots[slot]]);
+  const hist = Array.isArray(slots.history) ? slots.history : [];
+  for (const t of hist)
+    if (t && manifests[t]) emit("history/" + t, manifests[t]);
+  return links;
+}
+
+const BOARD_PAT = /Recomputer-([A-Za-z0-9][A-Za-z0-9-]*?)_/;
+const VER_PAT = /^Armbian[^_]*_([^_]+)/;               // Armbian[-unofficial]_26.11.0-trunk_…
+const REL_PAT = /_([a-z]+)_vendor_([0-9][\w.-]*?)(?:_|-crypt(?:_minimal)?|\.img)/; // release + kernel, incl. suffixless CLI
+const VARIANT_TITLE = { cli: "Minimal", desktop: "Desktop" };
+// Row-title icons + the Loader chip — static SVG literals only; svgIcon()
+// parses them into elements (el() is textContent-only by XSS contract).
+const VARIANT_ICON = {
+  cli: '<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 13 3.5-3.5L6 6"/><path d="M12 16h5"/><rect width="18" height="18" x="3" y="3" rx="4"/></svg>',
+  desktop: '<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>'
+};
+const CHIP_ICON = '<svg class="chip" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>';
+// 32px armbian logo (downscaled from docs.armbian.com/images/armbian-logo.png)
+const ARMBIAN_LOGO = "data:image/png;base64,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";
+const ROW_LABEL = { img: "Image", ota: "OTA",
+                    sha256: "sha256", sha: "sha256", chk: "checksum" };
+// button groups, rendered with a separator between each pair;
+// Build info (txt) is not a button — it lives on the meta line
+const GROUPS = [["img", "sha256"], ["ota", "chk"]];
+
+function parse(name, size, url, secure, lk) {
+  const m = name.match(BOARD_PAT);
+  if (!m) return null;
+  const board = m[1];
+  // Secure-boot images append "-crypt" before the variant suffix
+  // ("_gnome-crypt_desktop" vs "_gnome_desktop"), so match both orders.
+  // Desktop filenames carry their DE. Standard CLI has neither desktop nor
+  // minimal suffix after --minimal switched to BUILD_MINIMAL=no (d93aeecd):
+  // ..._trixie_vendor_6.1.172.img.xz and ..._6.1.172-crypt[_AB_PART].img.xz.
+  const variant = name.indexOf("_gnome_desktop") >= 0 || name.indexOf("_gnome-crypt_desktop") >= 0 ? "desktop"
+                : name.indexOf("_minimal") >= 0 || name.indexOf("-crypt_minimal") >= 0
+                  || /_vendor_[0-9][\w.-]*(?:-crypt)?(?:_AB_PART)?(?:\.img|_OTA\.)/.test(name) ? "cli" : null;
+  if (!variant) return null;
+  const mode = name.indexOf("_AB_PART") >= 0 ? "ab" : "recovery";
+  const crypt = name.indexOf("-crypt") >= 0;
+  let kind = null;
+  // .img.sha is armbian's own checksum of the unpacked .img — redundant
+  // next to the .img.xz.sha256 we generate; skip it.
+  if (name.endsWith(".img.sha")) return null;
+  if (name.endsWith(".img.xz.sha256")) kind = "sha256";
+  else if (name.endsWith(".img.xz")) kind = "img";
+  else if (name.endsWith(".img.txt")) kind = "txt";
+  // The outer package shell compresses with the payload codec, so the
+  // suffix is .tar.gz / .tar.xz / .tar.zst — match the stem, not one
+  // hard-coded codec (port of the seeed-build.yml fix bc6f90e5).
+  else if (name.includes("_OTA.tar.")) kind = "ota";
+  else if (name.endsWith("_OTA.checksums")) kind = "chk";
+  else if (name.endsWith(".sha256")) kind = "sha256";
+  if (!kind) return null;
+  // version metadata, extracted from the self-describing filename:
+  // version "26.11.0-trunk" → "26.11.0"; release codename + kernel
+  const vm = name.match(VER_PAT);
+  const rm = name.match(REL_PAT);
+  // secure comes from the mirror's "<sec>/" dir (plain|secure), not the
+  // filename — plain and secure builds share identical filenames by design.
+  return { board: board, variant: variant, mode: mode, crypt: crypt,
+           secure: !!secure, lk: lk,
+           kind: kind, name: name, size: size, url: url,
+           ver: vm ? vm[1].replace(/-.*$/, "") : "",
+           release: rm ? rm[1] : "",
+           kernel: rm ? rm[2] : "" };
+}
+
+function boardImage(board) {
+  return "https://armbian.com/api/v1/images/boards/480/recomputer-"
+       + board.replace("-dev-kit", "-devkit") + ".png";
+}
+
+// canonical board display order — mirrors the build-images.yml input
+// order (rk3576 variants grouped, rk3588 last); unknown boards append
+const BOARD_ORDER = ["rk3576-devkit", "rk3576-module-devkit",
+                     "rk3576-industrial", "rk3588-devkit"];
+const boardRank = b => { const i = BOARD_ORDER.indexOf(b); return i < 0 ? BOARD_ORDER.length : i; };
+
+function group(assets) {
+  const map = new Map();
+  for (const a of assets || []) {
+    const r = parse(a.name, a.size, a.browser_download_url, a.secure, a.lk);
+    if (!r) continue;
+    // secure joins the key: plain and secure twins share the filename, so
+    // without it one silently overwrites the other's links.
+    const key = [r.board, r.variant, r.mode, r.crypt, r.secure].join("\t");
+    if (!map.has(key))
+      map.set(key, { board: r.board, variant: r.variant, mode: r.mode,
+                     crypt: r.crypt, secure: r.secure, ver: r.ver, release: r.release,
+                     kernel: r.kernel, odboard: (a && a.board) || "", d: {} });
+    map.get(key).d[r.kind] = { name: r.name, size: a.size, url: a.browser_download_url, lk: a.lk };
+  }
+  const rank = e => (e.variant === "cli" ? 0 : 4)
+                  + (e.mode === "recovery" ? 0 : 2) + (e.crypt ? 1 : 0);
+  return [...map.values()].sort((x, y) => {
+    const bx = boardRank(x.board), by = boardRank(y.board);
+    if (bx !== by) return bx - by;
+    return x.board < y.board ? -1 : x.board > y.board ? 1 : rank(x) - rank(y);
+  });
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function fmtSize(bytes) {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return "";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return value.toFixed(unit === 0 || value >= 10 ? 0 : 1) + " " + units[unit];
+}
+
+// opts: {suppressAb, suppressCrypt, secure} — badge/box-title redundancy
+// control and the yellow secure button style
+function buildRow(entry, opts, slot) {
+  // head: bold variant + gray " - codename - armbian version - kernel" meta
+  // + "Build info" text link (build metadata, not a downloadable artifact)
+  const head = el("div", "row-head");
+  const title = el("span", "row-title", VARIANT_TITLE[entry.variant]);
+  if (VARIANT_ICON[entry.variant]) title.prepend(svgIcon(VARIANT_ICON[entry.variant]));
+  if (entry.mode === "ab" && !opts.suppressAb)
+    title.appendChild(el("span", "badge ab", "A/B"));
+  const meta = [entry.release, entry.ver, entry.kernel].filter(Boolean).join(" - ");
+  if (meta) head.appendChild(el("span", "row-meta", "- " + meta));
+  if (entry.d && entry.d.txt) {
+    const v = entry.d.txt;
+    const a = el("a", "row-info", "Build info");
+    a.href = (v.lk && LINKS[v.lk]) || v.url || "#";
+    a.target = "_blank";
+    a.rel = "noopener";
+    head.appendChild(a);
+  }
+  head.prepend(title);
+
+  // links: [Image · size] [sha256] | [OTA · size] [checksum]
+  const links = el("div", "row-links");
+  for (const group of GROUPS) {
+    const present = group.filter(k => entry.d && entry.d[k]);
+    if (!present.length) continue;
+    const grp = el("span", "grp");
+    for (const kind of present) {
+      const v = entry.d[kind];
+      const primary = kind === "img" || kind === "ota";
+      const cls = primary ? (opts.secure ? "btn secure" : "btn primary") : "btn";
+      const a = el("a", cls, ROW_LABEL[kind]);
+      // Use the embedded share link from the build-time rclone walk via
+      // the exact LINKS key carried on the asset — filenames repeat across
+      // profile dirs, so a lookup by name can grab the twin's link.
+      a.href = (v.lk && LINKS[v.lk]) || v.url || "#";
+      const size = primary ? fmtSize(v.size) : "";
+      if (size) a.appendChild(el("span", "file-size", " · " + size));
+      grp.appendChild(a);
+    }
+    links.appendChild(grp);
+  }
+
+  const row = el("div", "row");
+  row.append(head, links);
+  return row;
+}
+
+function buildModeBox(title, subtitle, entries, opts, slot) {
+  const box = el("div", "modebox");
+  const h3 = el("h3");
+  h3.appendChild(document.createTextNode(title));
+  // No Secure badge here: the enclosing secgroup frame carries the label.
+  h3.appendChild(el("span", "boxsub", " - " + subtitle));
+  box.appendChild(h3);
+  for (const entry of entries) box.appendChild(buildRow(entry, opts, slot));
+  return box;
+}
+
+// Loader rows ride the same LINKS map, keys
+// "<slot>/<board>/<sec>/loaders/<file>" — the kind segment IS the
+// loader marker, so loaders and images share one namespace.
+// Boards whose layout builds no SPI image simply lack the spi entry.
+function slotLoaders(slotDir) {
+  const out = new Map();
+  const prefix = slotDir + "/";
+  for (const path of Object.keys(LINKS)) {
+    if (!path.startsWith(prefix)) continue;
+    const parts = path.slice(prefix.length).split("/"); // [board, sec, "loaders", file]
+    if (parts.length !== 4 || parts[2] !== "loaders") continue;
+    const file = parts[3];
+    if (!file.endsWith(".xz")) continue; // .sha256 siblings resolved on demand
+    const kind = file === "spl_loader_maskrom.bin.xz" ? "maskrom"
+               : file === "rkspi_loader.img.xz" ? "spi" : null;
+    if (!kind) continue;
+    // Board keys must match parse()'s BOARD_PAT capture ("rk3576-devkit"),
+    // not the manifest's full dir name ("recomputer-rk3576-devkit").
+    const board = parts[0].replace(/^recomputer-/, "");
+    const b = out.get(board) || {};
+    const s = b[parts[1]] || {};
+    s[kind] = path;
+    b[parts[1]] = s;
+    out.set(board, b);
+  }
+  return out;
+}
+
+function loaderGroup(parent, label, lk, cls) {
+  const grp = el("span", "grp");
+  const a = el("a", cls, label);
+  a.href = LINKS[lk] || "#";
+  a.title = lk.split("/").pop();
+  const size = fmtSize(SIZES[lk]);
+  if (size) a.appendChild(el("span", "file-size", " · " + size));
+  grp.appendChild(a);
+  const sha = el("a", "btn", "sha256");
+  sha.href = LINKS[lk + ".sha256"] || "#";
+  grp.appendChild(sha);
+  parent.appendChild(grp);
+}
+
+// Loader first-class mode box: board u-boot production artifacts, FIRST in
+// its security group. maskrom ships for every board; spi only where built.
+function buildLoaderBox(secure, lds, slot) {
+  const bySec = (lds && lds[secure ? "secure" : "plain"]) || null;
+  if (!bySec || !bySec.maskrom) return null;
+  const box = el("div", "modebox");
+  const h3 = el("h3");
+  h3.appendChild(svgIcon(CHIP_ICON));
+  h3.appendChild(document.createTextNode("Loader"));
+  h3.appendChild(el("span", "boxsub",
+    secure ? " - signed maskrom / SPI flash" : " - maskrom / SPI flash"));
+  box.appendChild(h3);
+  const row = el("div", "row");
+  const links = el("div", "row-links loader-links");
+  const cls = secure ? "btn secure-loader" : "btn loader";
+  loaderGroup(links, "Maskrom", bySec.maskrom, cls);
+  if (bySec.spi) loaderGroup(links, "SPI Flash", bySec.spi, cls);
+  row.appendChild(links);
+  box.appendChild(row);
+  return box;
+}
+
+function secGroup(label, secure, boxes) {
+  const g = el("div", "secgroup" + (secure ? " secure" : ""));
+  g.appendChild(el("span", "glabel", label));
+  const inner = el("div", "modeboxes");
+  for (const b of boxes) inner.appendChild(b);
+  g.appendChild(inner);
+  return g;
+}
+
+function boardPage(board) {
+  return "https://armbian.com/boards/recomputer-"
+       + board.replace("-dev-kit", "-devkit");
+}
+
+function buildSection(board, entries, slot, loaders) {
+  const sec = el("section", "board");
+
+  // photo column: board name ABOVE the photo, large; the Armbian
+  // board-page button below (embedded logo — no external fetch)
+  const photo = el("div", "photo");
+  const cap = el("div", "caption", "reComputer ");
+  cap.appendChild(el("span", null, board));
+  photo.appendChild(cap);
+  const img = document.createElement("img");
+  img.src = boardImage(board);
+  img.alt = "reComputer " + board;
+  img.loading = "lazy";
+  img.onerror = () => photo.classList.add("noimg");
+  photo.appendChild(img);
+  const pl = el("div", "photo-link");
+  const pa = el("a", "btn", "Armbian Images");
+  const logo = document.createElement("img");
+  logo.src = ARMBIAN_LOGO;
+  logo.alt = "";
+  logo.setAttribute("aria-hidden", "true");
+  pa.prepend(logo);
+  pa.href = boardPage(board);
+  pa.target = "_blank";
+  pa.rel = "noopener";
+  pa.title = "Board page on armbian.com";
+  pl.appendChild(pa);
+  photo.appendChild(pl);
+
+  // downloads: two security groups (green PLAIN / red SECURE frames),
+  // each holding mode boxes — Loader first, then Recovery / A/B.
+  // secure = the mirror's <sec> dir (see slotAssets) — NOT
+  // the -crypt filename marker, which is encryption and self-describes.
+  const rec  = entries.filter(e => e.mode !== "ab" && !e.secure);
+  const ab   = entries.filter(e => e.mode === "ab" && !e.secure);
+  const recS = entries.filter(e => e.mode !== "ab" && e.secure);
+  const abS  = entries.filter(e => e.mode === "ab" && e.secure);
+
+  const info = el("div", "info");
+  const plainBoxes = [
+    buildLoaderBox(false, loaders, slot),
+    rec.length
+      ? buildModeBox("Recovery", "Single partition", rec,
+                     { suppressAb: false }, slot)
+      : null,
+    ab.length
+      ? buildModeBox("A/B", "Dual partition", ab, { suppressAb: true }, slot)
+      : null,
+  ].filter(Boolean);
+  if (plainBoxes.length)
+    info.append(secGroup("PLAIN", false, plainBoxes));
+  const secureBoxes = [
+    buildLoaderBox(true, loaders, slot),
+    recS.length
+      ? buildModeBox("Recovery", "Single partition", recS, { secure: true }, slot)
+      : null,
+    abS.length
+      ? buildModeBox("A/B", "Dual partition", abS,
+                     { suppressAb: true, secure: true }, slot)
+      : null,
+  ].filter(Boolean);
+  if (secureBoxes.length)
+    info.append(secGroup("SECURE", true, secureBoxes));
+
+  sec.append(photo, info);
+  return sec;
+}
+
+function fmtDate(iso) {
+  return iso ? iso.slice(0, 10) + " " + iso.slice(11, 16) + " UTC" : "";
+}
+
+/* ── slot derivation ──────────────────────────────────────────────────
+   Ground truth (OneDrive mode): slots.json, read at render time into
+   SLOTS as {"stable": tag, "pre-release": tag, "history": [tag, ...]}
+   — history holds the stables older than the current one, newest
+   first, 0..N entries (N is promote's HISTORY_DEPTH). A slot renders
+   iff its tag exists; each history tag renders its own card under the
+   LINKS prefix "history/<tag>/". RELEASES only joins in per-tag
+   metadata (publish date, GitHub link). NOTE: "latest"/"pre" are
+   page-internal kinds; the LINKS prefixes are the mirror contract. */
+const SLOT_DIRS = { latest: "stable", pre: "pre-release" };
+
+function relFor(tag, prerelease) {
+  const rel = (RELEASES || []).find(r => String(r.tag_name) === String(tag));
+  // Synthesize when the tag matches no release (release deleted after
+  // promotion): the slot still renders, just without a date.
+  return rel || { tag_name: tag, prerelease: !!prerelease, published_at: null };
+}
+
+function mirrorSlot(kind) {
+  const t = SLOTS[SLOT_DIRS[kind]];
+  return t ? relFor(t, SLOT_DIRS[kind] === "pre-release") : null;
+}
+
+function historyTags() {
+  return Array.isArray(SLOTS && SLOTS.history) ? SLOTS.history.filter(Boolean) : [];
+}
+
+// OneDrive: the build-time per-file share links are embedded in each
+// manifest — no runtime cross-origin fetches.
+function slotAssets(slotDir) {
+  // Keys are "<slot>/<board>/<sec>/<kind>/[ota/]<file>" (kind =
+  // recovery|ab|loaders). Scope to this slot's subtree so the slot
+  // sections don't all render the whole mirror; the sec dir
+  // (plain|secure) is the ONLY secure marker (filenames are identical
+  // across profiles) — carry it into `secure`. Loader rows are not
+  // image assets; slotLoaders() walks them from the same map.
+  // New manifests carry sizes; legacy ones gain them during Pages
+  // deployment without modifying their immutable manifest.
+  return Object.keys(LINKS)
+    .filter(path => {
+      if (!path.startsWith(slotDir + "/")) return false;
+      const parts = path.slice(slotDir.length + 1).split("/"); // [board, sec, kind, ...]
+      return parts.length >= 4 && parts[2] !== "loaders";
+    })
+    .map(path => ({
+      name: path.split("/").pop(),
+      size: SIZES[path],
+      browser_download_url: LINKS[path],
+      secure: path.slice(slotDir.length + 1).split("/")[1] === "secure",
+      lk: path,
+    }));
+}
+
+async function splitBoards(rel, slotDir) {
+  const sections = new Map();
+  for (const e of group(slotAssets(slotDir))) {
+    if (!sections.has(e.board)) sections.set(e.board, []);
+    sections.get(e.board).push(e);
+  }
+  return sections;
+}
+
+// Badge icons are static SVG literals. Parse them into real elements —
+// el() is textContent-only (XSS-safe for mirror/release data), so markup
+// must not go through it; no dynamic string ever enters svgIcon().
+function svgIcon(markup) {
+  return document.importNode(
+    new DOMParser().parseFromString(markup, "image/svg+xml").documentElement,
+    true);
+}
+
+async function buildSlot(rel, kind, slotDir) {  // kind: "latest" | "pre" | "hist-<tag>"
+  const det = document.createElement("details");
+  det.className = "slot";
+  det.id = "slot-" + kind;
+  det.open = kind === "latest";  // latest starts expanded; others collapsed
+
+  const SLOT_LOOK = {
+    latest: ["badge slotlatest", '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>', "Stable"],
+    pre:    ["badge slotpre",    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>', "Pre-release"],
+    // history cards share the old "Previous" look (gray); the tag in
+    // the summary line tells them apart
+    hist:   ["badge slotprev",   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>', "History"]
+  };
+  const look = SLOT_LOOK[kind.startsWith("hist") ? "hist" : kind];
+  // No stable yet: pre-release shown in the expanded "latest" slot
+  const badge = (kind === "latest" && rel.prerelease) ? SLOT_LOOK.pre : look;
+  const sum = el("summary");
+  const badgeEl = el("span", badge[0]);
+  badgeEl.appendChild(svgIcon(badge[1]));           // icon: static SVG → element
+  badgeEl.appendChild(document.createTextNode(badge[2]));  // label
+  sum.appendChild(badgeEl);
+  // tag links to the release page on GitHub; interactive elements inside
+  // <summary> follow their activation without toggling the details
+  const tag = el("a", "tag", rel.tag_name);
+  tag.href = "https://github.com/" + CFG.repo + "/releases/tag/" + rel.tag_name;
+  tag.title = "GitHub release";
+  tag.target = "_blank";   // open in a new tab, don't navigate away
+  tag.rel = "noopener";
+  sum.appendChild(tag);
+  sum.appendChild(el("span", "slotdate", fmtDate(rel.published_at)));
+  sum.appendChild(el("span", "chev", "▸"));
+
+  const body = el("div", "slot-body");
+  if (kind === "pre" || (kind === "latest" && rel.prerelease))
+    body.appendChild(el("div", "slot-note",
+      "Build completed on all boards — pending on-device verification before promotion to stable."));
+  const sections = await splitBoards(rel, slotDir);
+  const loaders = slotLoaders(slotDir);
+  // Empty slot (no assets parse into boards) → hide entirely. This happens
+  // for stale/foreign releases whose assets don't match our naming scheme.
+  if (sections.size === 0) return null;
+  for (const [b, es] of sections)
+    body.appendChild(buildSection(b, es, slotDir, loaders.get(b)));
+
+  det.append(sum, body);
+  return det;
+}
+
+async function boot() {
+  const boards = document.getElementById("boards");
+  try {
+    // Everything comes from the one data.json bundle — no runtime API
+    // calls, no cross-origin fetches (the loading banner covers the
+    // async gap).
+    await loadData();
+    const s = { latest: mirrorSlot("latest"), pre: mirrorSlot("pre"),
+                history: historyTags().map(t => relFor(t, false)) };
+    if (!s.latest && !s.pre && !s.history.length) throw new Error("no published image trees");
+
+    boards.hidden = true;  // all slot cards render as collapsible bars below
+    const slots = document.getElementById("slots");
+    // Build slots; buildSlot returns null for empty ones → skip them.
+    // Without a stable, a pre-release takes the expanded "latest" position.
+    // History is independent: history-only and pre+history still need cards.
+    const slotEls = [];
+    if (!s.latest && s.pre) {
+      const d = await buildSlot(s.pre, "latest", "pre-release");
+      if (d) slotEls.push(d);
+    } else {
+      if (s.latest) { const d = await buildSlot(s.latest, "latest", "stable");   if (d) slotEls.push(d); }
+      if (s.pre)    { const d = await buildSlot(s.pre, "pre", "pre-release");    if (d) slotEls.push(d); }
+    }
+    // History: one card per older stable, newest-first.
+    for (const h of s.history) {
+      const d = await buildSlot(h, "hist-" + h.tag_name, "history/" + h.tag_name);
+      if (d) slotEls.push(d);
+    }
+    if (!slotEls.length) throw new Error("no renderable releases");
+    slots.replaceChildren(...slotEls);
+
+    // anchor nav under the title — only slots that actually rendered
+    const nav = document.getElementById("slotnav");
+    nav.replaceChildren();
+    const navItems = !s.latest
+      ? [["latest", "Pre-release"]]  // no stable yet: only pre-release
+      : [["latest", "Stable"], ["pre", "Pre-release"]];
+    for (const [kind, label] of navItems) {
+      const rel = s[kind];
+      if (!rel) continue;
+      if (!document.getElementById("slot-" + kind)) continue;  // slot was skipped
+      const a = el("a", kind, label);   // class latest|pre → pill color
+      a.href = "#slot-" + kind;
+      a.onclick = () => { const d = document.getElementById("slot-" + kind);
+                          if (d) d.open = true; };
+      nav.appendChild(a);
+    }
+    // History pills: one per rendered history card, gray like the old
+    // Previous pill. Labeled "History"; when several cards exist the
+    // short tag rides along so pills stay distinguishable. The date is
+    // always in the tooltip.
+    for (const h of s.history || []) {
+      const kind = "hist-" + h.tag_name;
+      if (!document.getElementById("slot-" + kind)) continue;
+      const label = (s.history || []).length > 1
+        ? "History " + String(h.tag_name).slice(0, 6) : "History";
+      const a = el("a", "prev", label);
+      a.title = fmtDate(h.published_at) || h.tag_name;
+      a.href = "#slot-" + kind;
+      a.onclick = () => { const d = document.getElementById("slot-" + kind);
+                          if (d) d.open = true; };
+      nav.appendChild(a);
+    }
+    nav.hidden = nav.children.length === 0;
+  } catch (e) {
+    boards.hidden = false;
+    boards.textContent = "⚠ No releases available. Please check back later.";
+  }
+}
+
+if (typeof document !== "undefined") boot();
+</script>
+</body>
+</html>
