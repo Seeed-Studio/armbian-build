@@ -22,7 +22,7 @@
     where a relpath is "<board>/<sec>/<kind>/[ota/]<file>" — sec is
     plain|secure, kind is recovery|ab|loaders. ONE namespace: the
     storage tree, the manifest and the page's rendering hierarchy
-    (board → security group → {Loader, Recovery, A/B}) are the same
+    (board → security group → {Recovery, A/B, Loader}) are the same
     shape.
 
   Data flow (all client-side at browse time):
@@ -34,13 +34,15 @@
     * LINKS is synthesized from slots + manifests (synthLinks below):
       "<slot>/<board>/<sec>/<kind>/..." — one namespace; history tags
       prefix "history/<tag>/". Boards are discovered from the keys.
-  Layout: collapsible slot bars (Stable expanded by default, one gray
-  History card per older stable), pill anchor nav under the title,
-  per-board cards (name above photo, an Armbian board-page button
-  below), downloads split into two security groups (green PLAIN / red
-  SECURE frames, corner labels) — each holding a Loader box first
-  (maskrom / SPI flash, teal/orange buttons) then the Recovery / A/B
-  image boxes; buttons grouped
+  Layout: collapsible slot bars under a sticky header (Stable expanded
+  by default; accordion — one open at a time, the open slot's pill
+  glows), multiple older stables fold into one History bar holding a
+  tag list (each row expands inline, the tag keeps its GitHub release
+  link), per-board sections (name above photo, an Armbian board-page
+  button below), downloads split into two security groups (green PLAIN
+  / red SECURE frames, corner labels) — each holding the Recovery / A/B
+  image boxes, then a collapsed-by-default Loader box (maskrom / SPI
+  flash, teal/orange buttons); buttons grouped
   [Image sha256] | [OTA checksum] | [Build info], equal-width pills.
 -->
 <html lang="en">
@@ -53,12 +55,13 @@
   * { box-sizing: border-box; }
   body { margin: 0; font: 15px/1.65 -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
          background: #f3f5f8; color: #03353f; }
-  header { background: #03353f; color: #fff; padding: 34px 0 30px; }
+  header { background: #03353f; color: #fff; padding: 34px 0 30px;
+           position: sticky; top: 0; z-index: 20;  /* title + slot pills always visible */ }
   main { max-width: 980px; margin: 0 auto; padding: 0 20px; }
   h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: .5px; }
   h1 em { color: #8dc215; font-style: normal; }
   /* anchor nav under the title: pill links color-matched to their slot
-     badges (green Stable / amber Pre-release / gray Previous) */
+     badges (green Stable / amber Pre-release / gray History) */
   .slotnav { display: flex; gap: 12px; margin-top: 12px; font-size: 13px; }
   .slotnav[hidden] { display: none; }
   .slotnav a { display: inline-block; padding: 2px 14px; border-radius: 999px;
@@ -70,13 +73,15 @@
   .slotnav a.prev { color: #b9cdd4; border-color: rgba(185,205,212,.45);
                     background: rgba(185,205,212,.08); }
   .slotnav a:hover { filter: brightness(1.18); }
-  details.slot { scroll-margin-top: 12px; }
+  /* the pill of the currently-expanded slot glows in its own color */
+  .slotnav a.active { box-shadow: 0 0 0 1.5px currentColor,
+                                  0 0 12px currentColor;
+                      font-weight: 600; }
   .tag { display: inline-block; background: rgba(141,194,21,.18); color: #8dc215;
          border: 1px solid rgba(141,194,21,.55); border-radius: 6px; padding: 0 8px;
          font: 12px/1.7 ui-monospace, "SF Mono", monospace; text-decoration: none; }
   a.tag:hover { color: #03353f; border-color: #03353f; }
-  .board { display: flex; gap: 26px; background: #fff; border-radius: 14px;
-           padding: 24px; margin: 22px 0; box-shadow: 0 1px 4px rgba(3,53,63,.08); }
+  .board { display: flex; gap: 26px; padding: 24px 0; }
   .photo { flex: 0 0 300px; }
   .photo img { width: 100%; border-radius: 10px; background: #fff; mix-blend-mode: multiply; }
   .photo.noimg { flex-basis: auto; max-width: 300px; }
@@ -84,8 +89,8 @@
   .caption { text-align: center; font-size: 18px; font-weight: 700; margin-bottom: 10px; }
   .caption span { color: #8dc215; }
   .info { flex: 1; min-width: 0; }
-  /* OTA-mode boxes: Recovery (single partition) with the A/B box (dual
-     partition) below it, then their Secure counterparts. */
+  /* mode boxes within a security group: Recovery, A/B, then the
+     collapsed Loader box */
   .modeboxes { display: flex; flex-direction: column; gap: 14px; }
   /* border visible-but-subordinate (#c5d2da): the mode grouping must be
      legible, yet still yield to the colored secgroup frames above it */
@@ -95,8 +100,8 @@
     own frame/label), bleeding to the box edges (negative margins vs
     the box padding) and following its top corners; bottom rule
     separates band from rows */
-  .modebox h3 { font-size: 13px; font-weight: 700; color: #03353f;
-                margin: 0 -14px 8px; padding: 8px 14px 7px;
+  .modebox h3, details.loader-box > summary { font-size: 13px; font-weight: 700;
+                color: #03353f; margin: 0 -14px 8px; padding: 8px 14px 7px;
                 background: rgba(3,53,63,.05);
                 border-bottom: 1px solid #c5d2da;
                 border-radius: 9px 9px 0 0; letter-spacing: .3px; }
@@ -104,11 +109,32 @@
                           border-bottom-color: rgba(141,194,21,.30); }
   .secgroup.secure .modebox h3 { background: rgba(217,58,58,.07);
                                  border-bottom-color: rgba(217,58,58,.25); }
-  .modebox h3 svg.chip { width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px;
+  .modebox h3 svg.chip, details.loader-box > summary svg.chip {
+                         width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px;
                          color: #0ea5b7; }
+  /* Loader box: collapsed <details> — factory flashing artifacts, not
+     the primary download path; band = teal (PLAIN) / deep red (SECURE). */
+  .secgroup details.loader-box > summary { background: rgba(14,165,183,.16);
+                                           border-bottom-color: rgba(14,165,183,.40); }
+  .secgroup.secure details.loader-box > summary { background: rgba(217,58,58,.16);
+                                                  border-bottom-color: rgba(217,58,58,.45); }
+  details.loader-box > summary::after { content: "▸"; float: right;
+                                         color: #9db0ba; font-size: 12px; }
+  details.loader-box[open] > summary::after { content: "▾"; }
+  details.loader-box:not([open]) > summary { border-bottom: none;
+                                              margin-bottom: 0; }
+  details.loader-box:not([open]) { padding-bottom: 0; }
+  /* shared disclosure-summary behavior: slot bars, history rows, loader */
+  details.slot > summary, details.histrow > summary,
+  details.loader-box > summary { cursor: pointer; list-style: none;
+                                 user-select: none; }
+  details.slot > summary::-webkit-details-marker,
+  details.histrow > summary::-webkit-details-marker,
+  details.loader-box > summary::-webkit-details-marker { display: none; }
   .boxsub { color: #9db0ba; font-weight: 400; font-size: 12px; }
-  .row { display: flex; flex-direction: column; gap: 7px; padding: 9px 0;
-         border-top: 1px solid #eef2f6; }
+  .row { display: flex; flex-direction: column; gap: 7px; padding: 9px 0; }
+  /* divider rides the upper row's bottom; last row stays clean */
+  .row:not(:last-child) { border-bottom: 1px solid #d7dee5; }
   .row-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
   .row-title { font-weight: 700; font-size: 14px; color: #51707c; }
   .row-title svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; }
@@ -150,15 +176,27 @@
   .btn:hover { filter: brightness(.96); }
   .loading { color: #7b8fa0; padding: 30px 0; }
 
-  /* ── slot (<details>) blocks: previous / pre-release ── */
-  details.slot { background: #fff; border-radius: 14px; margin: 22px 0;
+  /* ── slot (<details>) bars: stable / pre-release / history ── */
+  details.slot { background: #fff; border-radius: 14px; margin: 12px 0;
                  box-shadow: 0 1px 4px rgba(3,53,63,.08); overflow: hidden; }
   details.slot > summary { display: flex; align-items: center; gap: 12px;
-                           padding: 15px 24px; cursor: pointer; list-style: none;
-                           user-select: none; font-size: 14px; }
-  details.slot > summary::-webkit-details-marker { display: none; }
-  details.slot > summary:hover { background: #fafbfd; }
+                           padding: 15px 24px; font-size: 14px; }
+  details.slot > summary:hover { filter: brightness(.98); }
   details.slot[open] > summary { border-bottom: 1px solid #eef2f6; }
+  /* slot band tinted by kind, matching the badge family */
+  details.slot-latest > summary { background: rgba(141,194,21,.08); }
+  details.slot-pre > summary { background: rgba(255,188,68,.12); }
+  details.slot-hist > summary { background: rgba(185,205,212,.30); }
+  /* history list: hairline-separated tag rows inside the History bar,
+     each expanding inline to that tag's downloads */
+  .slot-body.histlist { padding-top: 4px; }
+  details.histrow { border-top: 1px solid #d7dee5; }
+  details.histrow:first-child { border-top: none; }
+  details.histrow > summary { display: flex; align-items: center; gap: 12px;
+                              padding: 9px 2px; font-size: 14px; }
+  details.histrow > summary:hover { filter: brightness(.97); }
+  details.histrow[open] > summary > .chev { transform: rotate(90deg); }
+  details.histrow .slot-body { padding: 2px 0 12px; }
   .badge.slotlatest { background: rgba(141,194,21,.15); color: #5a7d0a;
                       border: 1px solid rgba(141,194,21,.55); font-size: 12px;
                       border-radius: 6px; padding: 1px 9px; vertical-align: 0; }
@@ -172,9 +210,10 @@
   .badge svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
   .slotdate { color: #7b8fa0; font-size: 13px; }
   .chev { margin-left: auto; color: #7b8fa0; transition: transform .15s; }
-  details.slot[open] .chev { transform: rotate(90deg); }
+  details.slot[open] > summary > .chev { transform: rotate(90deg); }
   .slot-body { padding: 2px 24px 10px; }
   .slot-body .board { margin: 16px 0 8px; }
+  .slot-body .board + .board { border-top: 1px solid #d7dee5; }
   .slot-note { color: #7b8fa0; font-size: 13px; padding: 12px 2px 0; }
 
   /* ── security groups: green PLAIN / red SECURE frames, solid inverted
@@ -365,16 +404,13 @@ function fmtSize(bytes) {
   return value.toFixed(unit === 0 || value >= 10 ? 0 : 1) + " " + units[unit];
 }
 
-// opts: {suppressAb, suppressCrypt, secure} — badge/box-title redundancy
-// control and the yellow secure button style
+// opts: {secure} — the yellow secure button style
 function buildRow(entry, opts, slot) {
   // head: bold variant + gray " - codename - armbian version - kernel" meta
   // + "Build info" text link (build metadata, not a downloadable artifact)
   const head = el("div", "row-head");
   const title = el("span", "row-title", VARIANT_TITLE[entry.variant]);
   if (VARIANT_ICON[entry.variant]) title.prepend(svgIcon(VARIANT_ICON[entry.variant]));
-  if (entry.mode === "ab" && !opts.suppressAb)
-    title.appendChild(el("span", "badge ab", "A/B"));
   const meta = [entry.release, entry.ver, entry.kernel].filter(Boolean).join(" - ");
   if (meta) head.appendChild(el("span", "row-meta", "- " + meta));
   if (entry.d && entry.d.txt) {
@@ -467,18 +503,19 @@ function loaderGroup(parent, label, lk, cls) {
   parent.appendChild(grp);
 }
 
-// Loader first-class mode box: board u-boot production artifacts, FIRST in
-// its security group. maskrom ships for every board; spi only where built.
+// Loader mode box: board u-boot production artifacts, LAST in its
+// security group and collapsed by default (factory flashing, not the
+// OS download path). maskrom ships for every board; spi only where built.
 function buildLoaderBox(secure, lds, slot) {
   const bySec = (lds && lds[secure ? "secure" : "plain"]) || null;
   if (!bySec || !bySec.maskrom) return null;
-  const box = el("div", "modebox");
-  const h3 = el("h3");
-  h3.appendChild(svgIcon(CHIP_ICON));
-  h3.appendChild(document.createTextNode("Loader"));
-  h3.appendChild(el("span", "boxsub",
+  const box = el("details", "modebox loader-box");
+  const sum = el("summary");
+  sum.appendChild(svgIcon(CHIP_ICON));
+  sum.appendChild(document.createTextNode("Loader"));
+  sum.appendChild(el("span", "boxsub",
     secure ? " - signed maskrom / SPI flash" : " - maskrom / SPI flash"));
-  box.appendChild(h3);
+  box.appendChild(sum);
   const row = el("div", "row");
   const links = el("div", "row-links loader-links");
   const cls = secure ? "btn secure-loader" : "btn loader";
@@ -533,8 +570,8 @@ function buildSection(board, entries, slot, loaders) {
   photo.appendChild(pl);
 
   // downloads: two security groups (green PLAIN / red SECURE frames),
-  // each holding mode boxes — Loader first, then Recovery / A/B.
-  // secure = the mirror's <sec> dir (see slotAssets) — NOT
+  // each holding mode boxes — Recovery / A/B, then Loader last
+  // (collapsed). secure = the mirror's <sec> dir (see slotAssets) — NOT
   // the -crypt filename marker, which is encryption and self-describes.
   const rec  = entries.filter(e => e.mode !== "ab" && !e.secure);
   const ab   = entries.filter(e => e.mode === "ab" && !e.secure);
@@ -543,26 +580,24 @@ function buildSection(board, entries, slot, loaders) {
 
   const info = el("div", "info");
   const plainBoxes = [
-    buildLoaderBox(false, loaders, slot),
     rec.length
-      ? buildModeBox("Recovery", "Single partition", rec,
-                     { suppressAb: false }, slot)
+      ? buildModeBox("Recovery", "Single partition", rec, {}, slot)
       : null,
     ab.length
-      ? buildModeBox("A/B", "Dual partition", ab, { suppressAb: true }, slot)
+      ? buildModeBox("A/B", "Dual partition", ab, {}, slot)
       : null,
+    buildLoaderBox(false, loaders, slot),
   ].filter(Boolean);
   if (plainBoxes.length)
     info.append(secGroup("PLAIN", false, plainBoxes));
   const secureBoxes = [
-    buildLoaderBox(true, loaders, slot),
     recS.length
       ? buildModeBox("Recovery", "Single partition", recS, { secure: true }, slot)
       : null,
     abS.length
-      ? buildModeBox("A/B", "Dual partition", abS,
-                     { suppressAb: true, secure: true }, slot)
+      ? buildModeBox("A/B", "Dual partition", abS, { secure: true }, slot)
       : null,
+    buildLoaderBox(true, loaders, slot),
   ].filter(Boolean);
   if (secureBoxes.length)
     info.append(secGroup("SECURE", true, secureBoxes));
@@ -573,6 +608,19 @@ function buildSection(board, entries, slot, loaders) {
 
 function fmtDate(iso) {
   return iso ? iso.slice(0, 10) + " " + iso.slice(11, 16) + " UTC" : "";
+}
+
+// Accordion wiring for a container of <details class=cls>: opening one
+// closes the rest. toggle doesn't bubble — capture phase. after(el)
+// runs on open AND close (the slot list re-syncs its pill glow both ways).
+function accordion(container, cls, after) {
+  container.addEventListener("toggle", e => {
+    if (!e.target.classList.contains(cls)) return;
+    if (e.target.open)
+      for (const d of container.querySelectorAll("details." + cls + "[open]"))
+        if (d !== e.target) d.open = false;
+    if (after) after(e.target);
+  }, true);
 }
 
 /* ── slot derivation ──────────────────────────────────────────────────
@@ -646,27 +694,32 @@ function svgIcon(markup) {
     true);
 }
 
-async function buildSlot(rel, kind, slotDir) {  // kind: "latest" | "pre" | "hist-<tag>"
-  const det = document.createElement("details");
-  det.className = "slot";
-  det.id = "slot-" + kind;
-  det.open = kind === "latest";  // latest starts expanded; others collapsed
+const SLOT_LOOK = {
+  latest: ["badge slotlatest", '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>', "Stable"],
+  pre:    ["badge slotpre",    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>', "Pre-release"],
+  hist:   ["badge slotprev",   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>', "History"]
+};
 
-  const SLOT_LOOK = {
-    latest: ["badge slotlatest", '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>', "Stable"],
-    pre:    ["badge slotpre",    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09zM12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>', "Pre-release"],
-    // history cards share the old "Previous" look (gray); the tag in
-    // the summary line tells them apart
-    hist:   ["badge slotprev",   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>', "History"]
-  };
-  const look = SLOT_LOOK[kind.startsWith("hist") ? "hist" : kind];
-  // No stable yet: pre-release shown in the expanded "latest" slot
-  const badge = (kind === "latest" && rel.prerelease) ? SLOT_LOOK.pre : look;
+async function buildSlot(rel, kind, slotDir, nested) {  // kind: "latest" | "pre" | <tag>
+  const det = document.createElement("details");
   const sum = el("summary");
-  const badgeEl = el("span", badge[0]);
-  badgeEl.appendChild(svgIcon(badge[1]));           // icon: static SVG → element
-  badgeEl.appendChild(document.createTextNode(badge[2]));  // label
-  sum.appendChild(badgeEl);
+  if (nested) {
+    // row inside the History list — plain row, the bar owns the badge
+    det.className = "histrow";
+    det.id = "histrow-" + kind;
+  } else {
+    // band class follows the badge: a promoted pre-release stays amber
+    const kindCls = kind.startsWith("hist") ? "hist"
+                  : (kind === "latest" && rel.prerelease) ? "pre" : kind;
+    det.className = "slot slot-" + kindCls;
+    det.id = "slot-" + kind;
+    det.open = kind === "latest";  // latest starts expanded; others collapsed
+    const look = SLOT_LOOK[kindCls];
+    const badge = el("span", look[0]);
+    badge.appendChild(svgIcon(look[1]));           // icon: static SVG → element
+    badge.appendChild(document.createTextNode(look[2]));  // label
+    sum.appendChild(badge);
+  }
   // tag links to the release page on GitHub; interactive elements inside
   // <summary> follow their activation without toggling the details
   const tag = el("a", "tag", rel.tag_name);
@@ -718,47 +771,91 @@ async function boot() {
       if (s.latest) { const d = await buildSlot(s.latest, "latest", "stable");   if (d) slotEls.push(d); }
       if (s.pre)    { const d = await buildSlot(s.pre, "pre", "pre-release");    if (d) slotEls.push(d); }
     }
-    // History: one card per older stable, newest-first.
+    // History, newest-first: a single tag gets a plain card; several get
+    // one History bar holding a hairline-separated tag list — each row
+    // expands inline to that tag's downloads.
+    const histNested = s.history.length > 1;
+    const histCards = [];
     for (const h of s.history) {
-      const d = await buildSlot(h, "hist-" + h.tag_name, "history/" + h.tag_name);
-      if (d) slotEls.push(d);
+      const d = await buildSlot(h, histNested ? h.tag_name : "hist-" + h.tag_name,
+                                "history/" + h.tag_name, histNested);
+      if (d) histCards.push(d);
+    }
+    if (!histNested) {
+      slotEls.push(...histCards);
+    } else if (histCards.length) {
+      const grp = document.createElement("details");
+      grp.className = "slot slot-hist";
+      grp.id = "slot-hist";
+      const gsum = el("summary");
+      const gb = el("span", SLOT_LOOK.hist[0]);
+      gb.appendChild(svgIcon(SLOT_LOOK.hist[1]));
+      gb.appendChild(document.createTextNode(SLOT_LOOK.hist[2]));
+      gsum.appendChild(gb);
+      gsum.appendChild(el("span", "slotdate", histCards.length + " builds"));
+      gsum.appendChild(el("span", "chev", "▸"));
+      const gbody = el("div", "slot-body histlist");
+      gbody.append(...histCards);
+      accordion(gbody, "histrow");   // one expanded tag at a time
+      grp.append(gsum, gbody);
+      slotEls.push(grp);
     }
     if (!slotEls.length) throw new Error("no renderable releases");
     slots.replaceChildren(...slotEls);
+    // anchorSlots: bring the slot LIST top just under the sticky header —
+    // all bars stay visible, the opened one expands below them; no-op
+    // when the list is already in view.
+    const anchorSlots = () => setTimeout(() => {
+      const min = document.querySelector("header").offsetHeight + 12;
+      const top = slots.getBoundingClientRect().top;
+      if (top < min - 4) window.scrollTo(0, window.scrollY + top - min);
+    }, 0);
+    // Accordion: at most one slot open, so two builds' download buttons
+    // are never on screen together; the pill glow follows on every toggle.
+    accordion(slots, "slot", d => { if (d.open) anchorSlots(); syncPills(); });
 
-    // anchor nav under the title — only slots that actually rendered
+    // anchor nav under the title — only slots that actually rendered.
+    // One pill factory: preventDefault (no anchor jump), open + re-anchor;
+    // re-clicking the open slot's pill still re-anchors (no toggle then).
     const nav = document.getElementById("slotnav");
     nav.replaceChildren();
+    const addPill = (kind, label, cls, title) => {
+      if (!document.getElementById("slot-" + kind)) return;  // slot skipped
+      const a = el("a", cls, label);   // class latest|pre|prev → pill color
+      a.href = "#slot-" + kind;
+      if (title) a.title = title;
+      a.onclick = e => { e.preventDefault();
+                         const d = document.getElementById("slot-" + kind);
+                         if (d) { d.open = true; anchorSlots(); } };
+      nav.appendChild(a);
+    };
+    // highlight the pill of the currently-expanded slot (none when all
+    // slots are collapsed)
+    const syncPills = () => {
+      for (const a of nav.children) {
+        const d = document.getElementById(a.getAttribute("href").slice(1));
+        a.classList.toggle("active", !!(d && d.open));
+      }
+    };
+    // No stable: the pre card occupies slot-latest; its rel lives in
+    // s.pre (s.latest is null there), and the pill keeps the amber look.
     const navItems = !s.latest
-      ? [["latest", "Pre-release"]]  // no stable yet: only pre-release
-      : [["latest", "Stable"], ["pre", "Pre-release"]];
-    for (const [kind, label] of navItems) {
-      const rel = s[kind];
-      if (!rel) continue;
-      if (!document.getElementById("slot-" + kind)) continue;  // slot was skipped
-      const a = el("a", kind, label);   // class latest|pre → pill color
-      a.href = "#slot-" + kind;
-      a.onclick = () => { const d = document.getElementById("slot-" + kind);
-                          if (d) d.open = true; };
-      nav.appendChild(a);
-    }
-    // History pills: one per rendered history card, gray like the old
-    // Previous pill. Labeled "History"; when several cards exist the
-    // short tag rides along so pills stay distinguishable. The date is
-    // always in the tooltip.
-    for (const h of s.history || []) {
-      const kind = "hist-" + h.tag_name;
-      if (!document.getElementById("slot-" + kind)) continue;
-      const label = (s.history || []).length > 1
-        ? "History " + String(h.tag_name).slice(0, 6) : "History";
-      const a = el("a", "prev", label);
-      a.title = fmtDate(h.published_at) || h.tag_name;
-      a.href = "#slot-" + kind;
-      a.onclick = () => { const d = document.getElementById("slot-" + kind);
-                          if (d) d.open = true; };
-      nav.appendChild(a);
-    }
+      ? [["latest", "Pre-release", s.pre, "pre"]]
+      : [["latest", "Stable", s.latest, "latest"],
+         ["pre", "Pre-release", s.pre, "pre"]];
+    for (const [kind, label, rel, cls] of navItems)
+      if (rel) addPill(kind, label, cls, null);
+    // History pill: single tag → straight to its card; list → the bar.
+    // Count = rendered rows (a stale tag whose assets don't parse is
+    // skipped by buildSlot and must not inflate the label).
+    if (s.history.length === 1)
+      addPill("hist-" + s.history[0].tag_name, "History", "prev",
+              fmtDate(s.history[0].published_at) || s.history[0].tag_name);
+    else if (s.history.length > 1)
+      addPill("hist", "History (" + histCards.length + ")", "prev",
+              s.history.map(h => h.tag_name).join(", "));
     nav.hidden = nav.children.length === 0;
+    syncPills();   // initial: latest starts expanded
   } catch (e) {
     boards.hidden = false;
     boards.textContent = "⚠ No releases available. Please check back later.";
